@@ -1,6 +1,6 @@
-# AI Fitness Coach — Milestone 6
+# AI Fitness Coach — Milestone 7
 
-Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 6 adds structured gym configuration, trainer/member assignments, tenant-scoped permissions, gym-specific workout and AI preferences, and a safe trainer approval lifecycle for nutrition adjustments. Full web dashboards, payments, device integrations, public galleries, mobile apps, and per-gym bot tokens remain out of scope.
+Production-oriented multi-tenant AI fitness platform with Telegram coaching and role-scoped web dashboards. Milestone 7 adds a Next.js master-admin, gym-owner, and trainer interface over the existing shared services. Payments, device integrations, public galleries, mobile apps, and per-gym bot tokens remain out of scope.
 
 ## Architecture
 
@@ -10,14 +10,15 @@ Central AI Platform / SUPER_ADMIN
                  ├─ Gym A ─ Owner ─ Trainers ─ Members
                  └─ Gym B ─ Owner ─ Trainers ─ Members
                                  │
-Telegram Bot ─> tenant scope ─> reusable services ─> PostgreSQL
-                                 ├─ Workout / equipment rules
-                                 ├─ Nutrition / versioned plans
-                                 ├─ Progress / approval workflow
-                                 └─ Private media / vision boundary
+Telegram Bot ─┐
+              ├─> auth + tenant scope ─> reusable services ─> PostgreSQL
+Next.js Web ──┘                           ├─ Workout / equipment rules
+                                         ├─ Nutrition / versioned plans
+                                         ├─ Progress / approval workflow
+                                         └─ Private media / vision boundary
 ```
 
-Telegram handlers only translate Telegram updates into calls to reusable services. Program selection, prescription validation, ownership checks, session state, and progression live outside the bot, so future mobile, Trainer Dashboard, and Master Admin Dashboard interfaces can use the same behavior and data model.
+Telegram handlers and Next.js server actions are thin interfaces over the same reusable services. Program selection, prescription validation, ownership checks, approval application, session state, and progression remain outside both interfaces. The dashboard does not contain a second implementation of business rules.
 
 Workout and nutrition plans are durable database entities rather than free-form AI text. Creating a replacement archives the user's old active plan and atomically creates the structured replacement while preserving history. The chat AI receives concise, read-only workout/nutrition summaries and cannot write plan tables.
 
@@ -46,11 +47,16 @@ TELEGRAM_BOT_TOKEN=your_bot_token
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-5
 SUPER_ADMIN_TELEGRAM_ID=
+DASHBOARD_SESSION_SECRET=
+DASHBOARD_DEV_LOGIN_TOKEN=
+DASHBOARD_DEV_USER_TELEGRAM_ID=
 PORT=3000
 NODE_ENV=development
 ```
 
 `DATABASE_URL` and `TELEGRAM_BOT_TOKEN` are required at startup. `OPENAI_API_KEY` is optional only if AI chat is not being used; a missing key produces a logged `ERROR` AI event and a safe Telegram message. `SUPER_ADMIN_TELEGRAM_ID` is optional and must be a numeric Telegram user ID. Never commit `.env`.
+
+Dashboard session and development-login secrets must each contain at least 32 characters. `DASHBOARD_DEV_USER_TELEGRAM_ID` identifies one fixed existing account; it is never sent to the browser and cannot be changed by login input.
 
 ### Getting a Telegram token
 
@@ -142,6 +148,50 @@ npm run test
 npm run typecheck
 npm run build
 ```
+
+## Web dashboards
+
+The web application is an isolated npm workspace at `apps/web`. It uses Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, server-rendered queries, and server actions. The existing Fastify/Telegram application remains at the repository root and is not restructured. Next uses webpack's extension aliases so the root NodeNext service modules can keep their correct `.js` import specifiers while being compiled from TypeScript in the monorepo.
+
+Run the dashboard in development:
+
+```bash
+npm run web:dev
+```
+
+Verify and build it independently:
+
+```bash
+npm run web:typecheck
+npm run web:test
+npm run web:build
+```
+
+The dashboard entry point routes authorized users to `/admin`, `/gym`, or `/trainer`. A user with multiple staff tenants receives an explicit role/gym selector; no tenant is chosen implicitly.
+
+### Development authentication
+
+Milestone 7 intentionally provides a development-only bootstrap, not production authentication. It is disabled whenever `NODE_ENV=production`. The login form accepts only `DASHBOARD_DEV_LOGIN_TOKEN`; the server maps that secret to the single fixed `DASHBOARD_DEV_USER_TELEGRAM_ID`, finds the existing internal user, and issues an HMAC-signed, eight-hour, HTTP-only, SameSite session cookie. Browser-supplied user IDs or role claims are never accepted.
+
+Before a production deployment, replace this bootstrap with production OAuth or passwordless authentication and a managed secret/session lifecycle. Production mode will not enable the temporary login.
+
+### Master Admin dashboard
+
+`/admin` and its gyms, users, AI observability, media, approvals, and audit sections require `User.systemRole = SUPER_ADMIN` on every server request. Metrics are database-backed. User and tenant details include plan/progress context, while AI views expose only stored concise summaries and telemetry. Media pages show metadata only.
+
+An actual private progress-photo request goes through `/api/media/photos/[photoId]`. The endpoint reauthenticates, reruns the privileged or tenant permission path, records the existing `PROGRESS_PHOTO_VIEWED` audit event, and returns a private `no-store` response. Pages never preload every private photo and there is no unauthenticated public media URL.
+
+### Gym Owner dashboard
+
+`/gym` includes tenant-scoped overview, paginated members, trainers, approvals, and settings. Owners can assign/unassign trainers, review approvals, and update the supported structured `GymSettings` fields only through existing services. Gym colors and AI identity are sanitized before use; arbitrary tenant CSS and raw JSON configuration are not accepted.
+
+### Trainer dashboard
+
+`/trainer` includes only explicitly assigned members and assigned pending approvals in the selected gym. A member-detail request revalidates the active trainer membership, exact tenant, active member membership, and exact `TrainerAssignment`. Full AI chats, system logs, unrelated memberships, and unauthorized private media are never returned.
+
+### Authorization and tenant isolation
+
+Every dashboard query and mutation obtains `actorUserId` from the signed server session, validates Zod inputs, rechecks roles in PostgreSQL, and calls the shared service layer. Non-admin direct admin URLs, foreign owner member URLs, and unassigned trainer member URLs fail without disclosing whether private records exist. Potentially large users, members, AI events, media, approvals, and audit collections use server-side pagination capped at 50 rows per page. Attention signals are structured coaching prompts (overdue check-in, low reported adherence, inactivity, pending review, recovery signal, stalled trend) and never medical diagnoses.
 
 ## Workout engine
 
@@ -311,8 +361,14 @@ src/
   media/                   # private, replaceable media storage contracts/adapters
   vision/                  # safe structured analysis prompts, types, and comparison
   services/                # reusable workout, nutrition, progress, user, gym logic
+    dashboard/             # centralized admin/owner/trainer read queries
   auth/                    # explicit tenant scopes and permission helpers
   utils/                   # safe text helpers
+apps/
+  web/                     # Next.js App Router dashboard workspace
+    app/                   # authenticated role routes and server actions
+    components/            # responsive dashboard UI
+    lib/                   # cookie auth and request context
 prisma/
   schema.prisma            # multi-tenant data model
   migrations/              # PostgreSQL migration history
@@ -325,6 +381,9 @@ prisma.config.ts           # Prisma 7 CLI configuration
 ## Security and observability
 
 - Secrets are loaded from ignored environment files and are redacted from handled errors.
+- Dashboard identity comes from a signed HTTP-only cookie; roles and tenant memberships are always reloaded server-side.
+- The temporary dashboard login is development-only, fixed to one configured Telegram-linked account, and disabled in production.
+- Dashboard collections are paginated server-side and foreign direct URLs fail without leaking private record existence.
 - AI events contain concise input/output summaries, token counts when available, latency, and errors—not hidden chain-of-thought.
 - `Media` stores private metadata and backend references; no public gallery or permanent unauthenticated URL exists.
 - `AgentDecision` stores explicit operational decisions and reasons, not private reasoning.

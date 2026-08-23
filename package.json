@@ -2,6 +2,9 @@
   "name": "ai-fitness-coach",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
   "description": "Multi-tenant AI fitness coaching platform foundation",
   "type": "module",
   "engines": {
@@ -13,6 +16,10 @@
     "start": "node dist/src/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --dir src",
+    "web:dev": "npm run dev --workspace @ai-fitness-coach/web",
+    "web:typecheck": "npm run typecheck --workspace @ai-fitness-coach/web",
+    "web:test": "npm run test --workspace @ai-fitness-coach/web",
+    "web:build": "npm run build --workspace @ai-fitness-coach/web",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
