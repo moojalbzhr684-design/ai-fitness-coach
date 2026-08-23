@@ -11,9 +11,15 @@ const mocks = vi.hoisted(() => ({
   deleteLatestProgressPhotoSet: vi.fn(),
   setPhotoPrivacyPreferences: vi.fn(),
   analyzeProgressPhotoSet: vi.fn(),
+  getActiveGymMemberships: vi.fn(),
+  resolveGymMembership: vi.fn(),
 }));
 
 vi.mock("../services/users.js", () => ({ findUserByTelegramId: mocks.findUserByTelegramId }));
+vi.mock("../auth/gym-scope.js", () => ({
+  getActiveGymMemberships: mocks.getActiveGymMemberships,
+  resolveGymMembership: mocks.resolveGymMembership,
+}));
 vi.mock("../services/progress-photos.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../services/progress-photos.js")>();
   return {
@@ -55,6 +61,7 @@ beforeEach(() => {
     id: "user-1",
     onboardingStep: OnboardingStep.COMPLETE,
   });
+  mocks.getActiveGymMemberships.mockResolvedValue([]);
 });
 
 describe("Telegram progress photo commands", () => {

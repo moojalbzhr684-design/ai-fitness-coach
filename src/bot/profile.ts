@@ -3,7 +3,6 @@ import type {
   ActivityLevel,
   ExperienceLevel,
   Goal,
-  Gym,
   TrainingPlace,
 } from "../generated/prisma/client.js";
 import { getUserProfile } from "../services/users.js";
@@ -49,8 +48,9 @@ export async function handleProfileCommand(ctx: Context): Promise<void> {
   }
 
   const profile = user.profile;
-  const memberships = user.gymMemberships as Array<{ gym: Gym }>;
-  const gyms = memberships.map(({ gym }) => `${gym.name} (${gym.aiName})`).join("، ");
+  const gyms = user.gymMemberships.map(({ gym }) => (
+    `${gym.settings?.displayName ?? gym.name} (${gym.settings?.aiDisplayName ?? gym.aiName})`
+  )).join("، ");
   const goal = profile?.goal as Goal | null | undefined;
   const activityLevel = profile?.activityLevel as ActivityLevel | null | undefined;
   const experienceLevel = profile?.experienceLevel as ExperienceLevel | null | undefined;

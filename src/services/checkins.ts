@@ -4,6 +4,7 @@ import {
   MembershipStatus,
   NutritionPlanStatus,
   OnboardingStep,
+  ProgressDecisionAction,
   WorkoutSessionStatus,
 } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
@@ -27,6 +28,7 @@ import {
   validateWorkoutsCompleted,
 } from "../progress/validation.js";
 import { buildAgentDecisionRecord, progressAuditEvents } from "./progress-decisions.js";
+import { ApprovalServiceError, createApprovalForAgentDecision } from "./approvals.js";
 
 const DAY_MS = 86_400_000;
 
@@ -37,7 +39,9 @@ export class CheckInError extends Error {
       | "RECENT_CHECKIN"
       | "NO_DRAFT"
       | "STALE_STEP"
-      | "INVALID_VALUE",
+      | "INVALID_VALUE"
+      | "GYM_SELECTION_REQUIRED"
+      | "INVALID_GYM",
     message: string,
   ) {
     super(message);
@@ -52,7 +56,7 @@ export async function getDraftCheckIn(userId: string) {
   });
 }
 
-export async function getOrCreateDraftCheckIn(userId: string) {
+export async function getOrCreateDraftCheckIn(userId: string, requestedGymId?: string) {
   const existing = await getDraftCheckIn(userId);
   if (existing) return { checkIn: existing, resumed: true };
 
@@ -62,8 +66,7 @@ export async function getOrCreateDraftCheckIn(userId: string) {
       profile: true,
       gymMemberships: {
         where: { status: MembershipStatus.ACTIVE, gym: { isActive: true } },
-        orderBy: { createdAt: "desc" },
-        take: 1,
+        orderBy: { createdAt: "asc" },
       },
       weeklyCheckIns: {
         where: { status: CheckInStatus.EVALUATED },
@@ -75,6 +78,15 @@ export async function getOrCreateDraftCheckIn(userId: string) {
   if (!user || user.onboardingStep !== OnboardingStep.COMPLETE || !user.profile) {
     throw new CheckInError("USER_NOT_READY", "Complete onboarding before starting a check-in");
   }
+  if (!requestedGymId && user.gymMemberships.length > 1) {
+    throw new CheckInError("GYM_SELECTION_REQUIRED", "Select a gym before starting a check-in");
+  }
+  const membership = requestedGymId
+    ? user.gymMemberships.find((item) => item.gymId === requestedGymId)
+    : user.gymMemberships[0];
+  if (requestedGymId && !membership) {
+    throw new CheckInError("INVALID_GYM", "Selected gym is outside the user's active memberships");
+  }
   const latest = user.weeklyCheckIns[0];
   if (latest?.evaluatedAt
     && Date.now() - latest.evaluatedAt.getTime() < RECENT_CHECKIN_WARNING_DAYS * DAY_MS) {
@@ -83,7 +95,7 @@ export async function getOrCreateDraftCheckIn(userId: string) {
   const checkIn = await prisma.weeklyCheckIn.create({
     data: {
       userId,
-      gymId: user.gymMemberships[0]?.gymId ?? null,
+      gymId: membership?.gymId ?? null,
       status: CheckInStatus.DRAFT,
       currentStep: CheckInStep.WEIGHT,
     },
@@ -168,7 +180,7 @@ export async function saveCheckInAnswer(params: {
 }
 
 export async function completeDraftCheckIn(userId: string) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const transaction = tx as unknown as typeof prisma;
     const checkIn = await transaction.weeklyCheckIn.findFirst({
       where: { userId, status: CheckInStatus.DRAFT, currentStep: CheckInStep.COMPLETE },
@@ -204,6 +216,9 @@ export async function completeDraftCheckIn(userId: string) {
       throw new CheckInError("USER_NOT_READY", "Progress profile fields are incomplete");
     }
     const effectiveGymId = checkIn.gymId && user.gymMemberships[0] ? checkIn.gymId : null;
+    const effectiveGymSettings = effectiveGymId
+      ? await transaction.gymSettings.findUnique({ where: { gymId: effectiveGymId } })
+      : null;
     const submittedAt = new Date();
     const previousCheckIn = await transaction.weeklyCheckIn.findFirst({
       where: {
@@ -267,7 +282,7 @@ export async function completeDraftCheckIn(userId: string) {
       weightKg: checkIn.weightKg,
     });
     const currentCalories = activeNutritionPlan?.target.calories ?? null;
-    const evaluationResult = evaluateProgress({
+    const baseEvaluationResult = evaluateProgress({
       goal: user.profile.goal,
       trend,
       nutritionAdherencePct: checkIn.nutritionAdherencePct,
@@ -279,6 +294,19 @@ export async function completeDraftCheckIn(userId: string) {
       minimumSafeCalories: minimumSafeCalorieTarget(bmr),
       hasGym: effectiveGymId !== null,
     });
+    const automaticRecommendationsAllowed = effectiveGymSettings?.allowAutomaticProgressRecommendations ?? true;
+    const evaluationResult = !automaticRecommendationsAllowed
+      && (baseEvaluationResult.recommendedCaloriesDelta !== null || baseEvaluationResult.recommendedStepsDelta !== null)
+      ? {
+          ...baseEvaluationResult,
+          action: ProgressDecisionAction.COACH_REVIEW_REQUIRED,
+          recommendedCaloriesDelta: null,
+          recommendedStepsDelta: null,
+          requiresCoachApproval: true,
+          reasonCodes: [...baseEvaluationResult.reasonCodes, "GYM_AUTOMATIC_RECOMMENDATIONS_DISABLED"],
+          summary: "إعدادات القاعة تتطلب مراجعة بشرية قبل إنشاء توصية تغيير محددة.",
+        }
+      : baseEvaluationResult;
     const evaluation = await transaction.progressEvaluation.create({
       data: {
         checkInId: checkIn.id,
@@ -299,7 +327,7 @@ export async function completeDraftCheckIn(userId: string) {
       currentCalories,
       checkIn.averageDailySteps,
     );
-    await transaction.agentDecision.create({
+    const createdDecision = await transaction.agentDecision.create({
       data: {
         userId,
         gymId: effectiveGymId,
@@ -320,8 +348,19 @@ export async function completeDraftCheckIn(userId: string) {
       where: { id: checkIn.id },
       data: { status: CheckInStatus.EVALUATED, evaluatedAt },
     });
-    return { checkIn: completed, evaluation };
+    return { checkIn: completed, evaluation, agentDecision: createdDecision };
   });
+  let approvalRequest = null;
+  if (result.agentDecision?.id
+    && result.agentDecision.gymId
+    && result.agentDecision.requiresCoachApproval) {
+    try {
+      approvalRequest = await createApprovalForAgentDecision(result.agentDecision.id);
+    } catch (error) {
+      if (!(error instanceof ApprovalServiceError) || error.code !== "NOT_ELIGIBLE") throw error;
+    }
+  }
+  return { ...result, approvalRequest };
 }
 
 export async function logManualWeight(userId: string, weightKg: number) {

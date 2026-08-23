@@ -25,7 +25,9 @@ export class ProgressPhotoError extends Error {
       | "SET_ALREADY_COMPLETE"
       | "NO_PHOTOS"
       | "CONFIRMATION_MISMATCH"
-      | "PRIVACY_NOT_ALLOWED",
+      | "PRIVACY_NOT_ALLOWED"
+      | "GYM_SELECTION_REQUIRED"
+      | "INVALID_GYM",
     message: string,
   ) {
     super(message);
@@ -89,6 +91,7 @@ export async function getDraftProgressPhotoSet(userId: string) {
 export async function getOrCreateProgressPhotoSet(
   userId: string,
   analysisRequested: boolean,
+  requestedGymId?: string,
 ) {
   const existing = await getDraftProgressPhotoSet(userId);
   if (existing) return { photoSet: existing, resumed: true };
@@ -99,8 +102,7 @@ export async function getOrCreateProgressPhotoSet(
       profile: true,
       gymMemberships: {
         where: { status: MembershipStatus.ACTIVE, gym: { isActive: true } },
-        orderBy: { createdAt: "desc" },
-        take: 1,
+        orderBy: { createdAt: "asc" },
       },
       bodyMeasurements: {
         where: { waistCm: { not: null } },
@@ -116,7 +118,16 @@ export async function getOrCreateProgressPhotoSet(
   if (analysisRequested && !user.profile.allowVisionAnalysis) {
     throw new ProgressPhotoError("PRIVACY_NOT_ALLOWED", "Vision consent is required");
   }
-  const gymId = user.gymMemberships[0]?.gymId ?? null;
+  if (!requestedGymId && user.gymMemberships.length > 1) {
+    throw new ProgressPhotoError("GYM_SELECTION_REQUIRED", "Select a gym before starting progress photos");
+  }
+  const membership = requestedGymId
+    ? user.gymMemberships.find((item) => item.gymId === requestedGymId)
+    : user.gymMemberships[0];
+  if (requestedGymId && !membership) {
+    throw new ProgressPhotoError("INVALID_GYM", "Selected gym is outside the user's active memberships");
+  }
+  const gymId = membership?.gymId ?? null;
   return prisma.$transaction(async (tx) => {
     const transaction = tx as unknown as typeof prisma;
     const created = await transaction.progressPhotoSet.create({

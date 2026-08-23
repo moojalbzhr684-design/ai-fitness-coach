@@ -95,3 +95,39 @@ export function calculateNutritionTargets(
   validateNutritionTarget(result);
   return result;
 }
+
+export function calculateNutritionTargetsForCalories(
+  input: NutritionCalculationInput,
+  targetCalories: number,
+): NutritionCalculation {
+  const baseline = calculateNutritionTargets(input);
+  if (!Number.isInteger(targetCalories) || targetCalories < minimumSafeCalorieTarget(baseline.bmr)) {
+    throw new RangeError("Requested calories are below the current safety floor");
+  }
+  if (targetCalories > baseline.maintenanceCalories * 1.5) {
+    throw new RangeError("Requested calories exceed the supported safety range");
+  }
+  let proteinGrams = input.weightKg * PROTEIN_GRAMS_PER_KG[input.goal];
+  let fatGrams = Math.max(
+    input.weightKg * FAT_GRAMS_PER_KG,
+    (targetCalories * MIN_FAT_CALORIE_RATIO) / 9,
+  );
+  fatGrams = Math.min(fatGrams, (targetCalories * MAX_FAT_CALORIE_RATIO) / 9);
+  let remainingCalories = targetCalories - proteinGrams * 4 - fatGrams * 9;
+  if (remainingCalories < 0) {
+    fatGrams = (targetCalories * MIN_FAT_CALORIE_RATIO) / 9;
+    proteinGrams = Math.min(proteinGrams, (targetCalories - fatGrams * 9) / 4);
+    remainingCalories = targetCalories - proteinGrams * 4 - fatGrams * 9;
+  }
+  const result: NutritionCalculation = {
+    bmr: baseline.bmr,
+    maintenanceCalories: baseline.maintenanceCalories,
+    targetCalories,
+    proteinGrams: round1(proteinGrams),
+    fatGrams: round1(fatGrams),
+    carbsGrams: round1(Math.max(0, remainingCalories / 4)),
+    calculationVersion: `${CALCULATION_VERSION}-approved-adjustment`,
+  };
+  validateNutritionTarget(result);
+  return result;
+}

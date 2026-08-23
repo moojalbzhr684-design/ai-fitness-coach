@@ -29,6 +29,12 @@ describe("workout split selection", () => {
 });
 
 describe("program generation", () => {
+  const defaultMetadata: PrescriptionExerciseMetadata = {
+    exerciseType: ExerciseType.COMPOUND,
+    equipment: EquipmentType.MACHINE,
+    movementPattern: MovementPattern.SQUAT,
+    primaryMuscle: MuscleGroup.QUADS,
+  };
   it("limits a short beginner session to four exercises and valid prescriptions", () => {
     const metadata = new Proxy(new Map<string, PrescriptionExerciseMetadata>(), {
       get(target, property, receiver) {
@@ -93,6 +99,42 @@ describe("program generation", () => {
     ]);
     expect(generated.days.flatMap((day) => day.exercises).map((item) => item.slug))
       .not.toContain("leg-press");
+  });
+
+  it("excludes an unavailable exercise and selects a configured template substitution", () => {
+    const slugs = [
+      "leg-press", "goblet-squat", "machine-chest-press", "lat-pulldown", "seated-leg-curl",
+      "hack-squat", "incline-dumbbell-press", "seated-cable-row", "hip-thrust",
+      "dumbbell-lateral-raise", "machine-shoulder-press",
+    ];
+    const metadata = new Map(slugs.map((slug) => [slug, defaultMetadata]));
+    const generated = generateWorkoutProgram({
+      experienceLevel: ExperienceLevel.INTERMEDIATE,
+      goal: Goal.GENERAL_FITNESS,
+      trainingDaysPerWeek: 2,
+      trainingPlace: TrainingPlace.GYM,
+      sessionMinutes: 30,
+    }, metadata, { unavailableSlugs: new Set(["leg-press"]) });
+    expect(generated.days[0]?.exercises[0]?.slug).toBe("goblet-squat");
+    expect(generated.days.flatMap((day) => day.exercises).map(({ slug }) => slug)).not.toContain("leg-press");
+  });
+
+  it("applies a safe trainer rep range and preference note deterministically", () => {
+    const metadata = new Proxy(new Map<string, PrescriptionExerciseMetadata>(), {
+      get(target, property, receiver) {
+        if (property === "get") return () => defaultMetadata;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const generated = generateWorkoutProgram({
+      experienceLevel: ExperienceLevel.INTERMEDIATE,
+      goal: Goal.MUSCLE_GAIN,
+      trainingDaysPerWeek: 2,
+      trainingPlace: TrainingPlace.GYM,
+      sessionMinutes: 30,
+    }, metadata, { preferredRepRange: { min: 8, max: 10 }, preferredWorkoutStyle: "controlled tempo" });
+    expect(generated.days.every((day) => day.notes?.includes("controlled tempo"))).toBe(true);
+    expect(generated.days.flatMap((day) => day.exercises).every((exercise) => exercise.repMin === 8 && exercise.repMax === 10)).toBe(true);
   });
 });
 

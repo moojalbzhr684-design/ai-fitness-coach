@@ -32,6 +32,17 @@ async function main(): Promise<void> {
     },
   });
 
+  await prisma.gymSettings.upsert({
+    where: { gymId: gym.id },
+    update: {},
+    create: {
+      gymId: gym.id,
+      displayName: "Development Gym",
+      aiDisplayName: "Dev Coach",
+      defaultLanguage: "ar-IQ",
+    },
+  });
+
   console.log(`Seeded gym: ${gym.name} (${gym.joinCode})`);
   const workoutSeed = await seedExercises(prisma);
   console.log(

@@ -1,7 +1,9 @@
 import type { getCoachContext } from "../services/users.js";
+import type { getEffectiveCoachConfiguration } from "../services/coach-configuration.js";
 import { truncateText } from "../utils/text.js";
 
 type CoachContext = NonNullable<Awaited<ReturnType<typeof getCoachContext>>>;
+type CoachConfiguration = Awaited<ReturnType<typeof getEffectiveCoachConfiguration>>;
 
 function compactJson(value: unknown): string {
   if (value === null || value === undefined) {
@@ -11,10 +13,10 @@ function compactJson(value: unknown): string {
   return truncateText(JSON.stringify(value), 2_000);
 }
 
-export function buildCoachInstructions(context: CoachContext): string {
+export function buildCoachInstructions(context: CoachContext, configuration?: CoachConfiguration): string {
   const profile = context.profile;
   const gym = context.gymMemberships[0]?.gym;
-  const coachName = gym?.aiName ?? "AI Coach";
+  const coachName = configuration?.gym?.coachName ?? gym?.settings?.aiDisplayName ?? gym?.aiName ?? "AI Coach";
   const program = context.workoutPrograms[0];
   const currentWorkout = context.workoutSessions[0];
   const nutritionPlan = context.nutritionPlans[0];
@@ -38,6 +40,12 @@ export function buildCoachInstructions(context: CoachContext): string {
     "بيانات التقدم والقرار المخزن أدناه للقراءة فقط. اشرح summary وreasonCodes كما هي ولا تخترع سبباً جديداً.",
     "إذا طلب المستخدم تغيير السعرات أو الخطة، وضّح أن التغييرات تمر عبر خدمة التقدم/الخطة ولم تُطبّق تلقائياً في هذه المرحلة.",
     "ملخص صور التقدم أدناه للقراءة فقط. لا توجد صور خام أو مراجع ملفات بالسياق. لا تخترع نسبة دهون دقيقة أو قياس عضل، ولا تشخّص أو تستنتج هوية أو صفات حساسة.",
+    ...(configuration?.gym?.trainingPhilosophy
+      ? [`فلسفة تدريب القاعة (لا تتجاوز قواعد الأمان): ${configuration.gym.trainingPhilosophy}`]
+      : []),
+    ...(configuration?.trainer?.preferences
+      ? [`تفضيلات المدرب (استشارية فقط): ${compactJson(configuration.trainer.preferences)}`]
+      : []),
     "معلومات المستخدم:",
     `العمر: ${profile?.age ?? "غير محدد"}`,
     `الجنس: ${profile?.sex ?? "غير محدد"}`,
@@ -109,8 +117,8 @@ export function buildCoachInstructions(context: CoachContext): string {
       : ["ما عنده تحليل صور تقدم مكتمل حالياً."]),
     ...(gym
       ? [
-          `القاعة: ${gym.name}`,
-          `اسم المدرب: ${gym.aiName}`,
+          `القاعة: ${configuration?.gym?.displayName ?? gym.name}`,
+          `اسم المدرب: ${coachName}`,
           `إعدادات القاعة للذكاء الاصطناعي: ${compactJson(gym.aiConfig)}`,
         ]
       : []),

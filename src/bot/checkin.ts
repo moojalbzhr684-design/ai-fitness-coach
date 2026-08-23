@@ -14,6 +14,7 @@ import {
 import { getCheckInStatus, getProgressSummary } from "../services/progress.js";
 import { findUserByTelegramId } from "../services/users.js";
 import { normalizeNumericText } from "../utils/text.js";
+import { getActiveGymMemberships, resolveGymMembership } from "../auth/gym-scope.js";
 
 async function currentUser(ctx: Context) {
   if (!ctx.from) return null;
@@ -136,14 +137,17 @@ async function completeAndReply(ctx: Context, userId: string): Promise<void> {
   ].join("\n"));
 }
 
-export async function handleCheckInCommand(ctx: Context): Promise<void> {
+async function startCheckIn(ctx: Context, membershipId?: string): Promise<void> {
   const user = await currentUser(ctx);
   if (!user) {
     await ctx.reply("استخدم /start بالبداية حتى نسوي ملفك.");
     return;
   }
   try {
-    const result = await getOrCreateDraftCheckIn(user.id);
+    const membership = membershipId
+      ? (await resolveGymMembership({ userId: user.id, membershipId })).membership
+      : null;
+    const result = await getOrCreateDraftCheckIn(user.id, membership?.gymId);
     if (result.resumed) await ctx.reply("نكمل المتابعة من المكان اللي وقفنا بيه.");
     if (result.checkIn.currentStep === CheckInStep.COMPLETE) {
       await completeAndReply(ctx, user.id);
@@ -152,6 +156,15 @@ export async function handleCheckInCommand(ctx: Context): Promise<void> {
     await sendCheckInPrompt(ctx, result.checkIn.currentStep);
   } catch (error) {
     if (error instanceof CheckInError) {
+      if (error.code === "GYM_SELECTION_REQUIRED") {
+        const memberships = await getActiveGymMemberships(user.id);
+        const keyboard = new InlineKeyboard();
+        for (const item of memberships) {
+          keyboard.text(item.gym.settings?.displayName ?? item.gym.name, `checkin:gym:${item.id}`).row();
+        }
+        await ctx.reply("اختار القاعة لهذه المتابعة:", { reply_markup: keyboard });
+        return;
+      }
       await ctx.reply(
         error.code === "RECENT_CHECKIN"
           ? "سويت متابعة قبل فترة قصيرة. عادةً الأفضل نخلي المتابعة أسبوعية؛ جرّب بعد مرور 5 أيام."
@@ -161,6 +174,17 @@ export async function handleCheckInCommand(ctx: Context): Promise<void> {
     }
     throw error;
   }
+}
+
+export async function handleCheckInCommand(ctx: Context): Promise<void> {
+  await startCheckIn(ctx);
+}
+
+export async function handleCheckInGymCallback(ctx: Context): Promise<void> {
+  await ctx.answerCallbackQuery();
+  const membershipId = ctx.callbackQuery?.data?.split(":")[2];
+  if (!membershipId) return;
+  await startCheckIn(ctx, membershipId);
 }
 
 async function saveAndContinue(

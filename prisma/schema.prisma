@@ -251,6 +251,20 @@ enum ProgressDecisionAction {
   COACH_REVIEW_REQUIRED
 }
 
+enum ApprovalType {
+  NUTRITION_ADJUSTMENT
+  WORKOUT_ADJUSTMENT
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
 model User {
   id               String         @id @default(cuid())
   telegramId       BigInt         @unique
@@ -277,6 +291,13 @@ model User {
   progressEvaluations ProgressEvaluation[]
   progressPhotoSets   ProgressPhotoSet[]
   photoAnalyses       ProgressPhotoAnalysis[]
+  trainerProfile      TrainerProfile?
+  trainerAssignments  TrainerAssignment[]     @relation("AssignedTrainer")
+  memberAssignments   TrainerAssignment[]     @relation("AssignedMember")
+  trainerPreferences  TrainerPreferences[]
+  memberApprovals     ApprovalRequest[]       @relation("ApprovalMember")
+  trainerApprovals    ApprovalRequest[]       @relation("ApprovalTrainer")
+  reviewedApprovals   ApprovalRequest[]       @relation("ApprovalReviewer")
 
   @@index([systemRole])
   @@index([onboardingStep])
@@ -326,20 +347,25 @@ model Gym {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  memberships         GymMembership[]
-  media               Media[]
-  aiEvents            AIEvent[]
-  agentDecisions      AgentDecision[]
-  auditLogs           AuditLog[]
-  workoutPrograms     WorkoutProgram[]
-  workoutSessions     WorkoutSession[]
-  nutritionTargets    NutritionTarget[]
-  nutritionPlans      NutritionPlan[]
-  bodyMeasurements    BodyMeasurement[]
-  weeklyCheckIns      WeeklyCheckIn[]
-  progressEvaluations ProgressEvaluation[]
-  progressPhotoSets   ProgressPhotoSet[]
-  photoAnalyses       ProgressPhotoAnalysis[]
+  memberships          GymMembership[]
+  media                Media[]
+  aiEvents             AIEvent[]
+  agentDecisions       AgentDecision[]
+  auditLogs            AuditLog[]
+  workoutPrograms      WorkoutProgram[]
+  workoutSessions      WorkoutSession[]
+  nutritionTargets     NutritionTarget[]
+  nutritionPlans       NutritionPlan[]
+  bodyMeasurements     BodyMeasurement[]
+  weeklyCheckIns       WeeklyCheckIn[]
+  progressEvaluations  ProgressEvaluation[]
+  progressPhotoSets    ProgressPhotoSet[]
+  photoAnalyses        ProgressPhotoAnalysis[]
+  settings             GymSettings?
+  trainerAssignments   TrainerAssignment[]
+  trainerPreferences   TrainerPreferences[]
+  approvalRequests     ApprovalRequest[]
+  exerciseAvailability GymExerciseAvailability[]
 
   @@index([isActive])
 }
@@ -376,9 +402,10 @@ model Media {
   height         Int?
   createdAt      DateTime     @default(now())
 
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gym           Gym?           @relation(fields: [gymId], references: [id], onDelete: SetNull)
-  progressPhoto ProgressPhoto?
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym             Gym?           @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  progressPhoto   ProgressPhoto?
+  gymSettingsLogo GymSettings?
 
   @@index([userId, createdAt])
   @@index([gymId, createdAt])
@@ -492,12 +519,136 @@ model AgentDecision {
   rejectedAt            DateTime?
   createdAt             DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gym  Gym? @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym             Gym?             @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  approvalRequest ApprovalRequest?
 
   @@index([userId, createdAt])
   @@index([gymId, createdAt])
   @@index([requiresCoachApproval, createdAt])
+}
+
+model GymSettings {
+  id                                        String   @id @default(cuid())
+  gymId                                     String   @unique
+  displayName                               String?
+  aiDisplayName                             String?
+  primaryColor                              String?
+  secondaryColor                            String?
+  logoMediaId                               String?  @unique
+  defaultLanguage                           String   @default("ar-IQ")
+  requireTrainerApprovalForNutritionChanges Boolean  @default(true)
+  requireTrainerApprovalForWorkoutChanges   Boolean  @default(true)
+  allowAutomaticProgressRecommendations     Boolean  @default(true)
+  trainingPhilosophy                        String?
+  defaultSessionMinutes                     Int?
+  preferredSplitConfig                      Json?
+  allowedEquipment                          Json?
+  welcomeMessage                            String?
+  createdAt                                 DateTime @default(now())
+  updatedAt                                 DateTime @updatedAt
+
+  gym       Gym    @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  logoMedia Media? @relation(fields: [logoMediaId], references: [id], onDelete: SetNull)
+}
+
+model TrainerProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  displayName     String?
+  bio             String?
+  specialties     Json?
+  yearsExperience Int?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([isActive])
+}
+
+model TrainerAssignment {
+  id            String   @id @default(cuid())
+  gymId         String
+  trainerUserId String
+  memberUserId  String
+  isPrimary     Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  gym     Gym  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  trainer User @relation("AssignedTrainer", fields: [trainerUserId], references: [id], onDelete: Cascade)
+  member  User @relation("AssignedMember", fields: [memberUserId], references: [id], onDelete: Cascade)
+
+  @@unique([gymId, trainerUserId, memberUserId])
+  @@index([gymId, trainerUserId])
+  @@index([gymId, memberUserId, isPrimary])
+}
+
+model TrainerPreferences {
+  id                    String   @id @default(cuid())
+  trainerUserId         String
+  gymId                 String
+  preferredWorkoutStyle String?
+  preferredRepRanges    Json?
+  exercisePreferences   Json?
+  nutritionNotes        String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  trainer User @relation(fields: [trainerUserId], references: [id], onDelete: Cascade)
+  gym     Gym  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@unique([trainerUserId, gymId])
+  @@index([gymId])
+}
+
+model ApprovalRequest {
+  id               String         @id @default(cuid())
+  reference        String         @unique
+  gymId            String
+  memberUserId     String
+  trainerUserId    String?
+  agentDecisionId  String?        @unique
+  type             ApprovalType
+  status           ApprovalStatus @default(PENDING)
+  requestedChange  Json
+  currentValue     Json?
+  reason           String
+  createdAt        DateTime       @default(now())
+  reviewedAt       DateTime?
+  reviewedByUserId String?
+  reviewNote       String?
+  expiresAt        DateTime?
+
+  gym           Gym            @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  member        User           @relation("ApprovalMember", fields: [memberUserId], references: [id], onDelete: Cascade)
+  trainer       User?          @relation("ApprovalTrainer", fields: [trainerUserId], references: [id], onDelete: SetNull)
+  agentDecision AgentDecision? @relation(fields: [agentDecisionId], references: [id], onDelete: SetNull)
+  reviewer      User?          @relation("ApprovalReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([gymId, status, createdAt])
+  @@index([trainerUserId, status, createdAt])
+  @@index([memberUserId, status, createdAt])
+  @@index([expiresAt, status])
+}
+
+model GymExerciseAvailability {
+  id          String   @id @default(cuid())
+  gymId       String
+  exerciseId  String
+  isAvailable Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  gym      Gym      @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([gymId, exerciseId])
+  @@index([gymId, isAvailable])
+  @@index([exerciseId])
 }
 
 model AuditLog {
@@ -537,8 +688,9 @@ model Exercise {
 
   workoutDayExercises WorkoutDayExercise[]
   exerciseLogs        ExerciseLog[]
-  substitutions       ExerciseSubstitution[] @relation("ExerciseSubstitutions")
-  substitutedBy       ExerciseSubstitution[] @relation("SubstituteExercise")
+  substitutions       ExerciseSubstitution[]    @relation("ExerciseSubstitutions")
+  substitutedBy       ExerciseSubstitution[]    @relation("SubstituteExercise")
+  gymAvailability     GymExerciseAvailability[]
 
   @@index([primaryMuscle, isActive])
   @@index([movementPattern, equipment, isActive])

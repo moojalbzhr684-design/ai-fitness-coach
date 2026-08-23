@@ -4,6 +4,7 @@ import {
   ACTIVITY_MULTIPLIERS,
   calculateBmr,
   calculateNutritionTargets,
+  calculateNutritionTargetsForCalories,
   GOAL_CALORIE_FACTORS,
   PROTEIN_GRAMS_PER_KG,
 } from "./calculator.js";
@@ -70,5 +71,20 @@ describe("Mifflin-St Jeor calorie calculator", () => {
       goal: Goal.GENERAL_FITNESS,
     });
     expect(result.carbsGrams).toBeGreaterThanOrEqual(0);
+  });
+
+  it("recalculates safe macros for an approved calorie target", () => {
+    const result = calculateNutritionTargetsForCalories({ ...base, sex: Sex.MALE }, 2_300);
+    expect(result.targetCalories).toBe(2_300);
+    expect(result.calculationVersion).toContain("approved-adjustment");
+    expect(result.proteinGrams * 4 + result.fatGrams * 9 + result.carbsGrams * 4).toBeCloseTo(2_300, 0);
+  });
+
+  it("blocks an approved target below the current safety floor", () => {
+    expect(() => calculateNutritionTargetsForCalories({ ...base, sex: Sex.MALE }, 1_000)).toThrow("safety floor");
+  });
+
+  it("blocks an extreme calorie increase", () => {
+    expect(() => calculateNutritionTargetsForCalories({ ...base, sex: Sex.MALE }, 5_000)).toThrow("safety range");
   });
 });

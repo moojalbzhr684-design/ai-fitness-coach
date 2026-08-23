@@ -1,17 +1,20 @@
-# AI Fitness Coach — Milestone 5
+# AI Fitness Coach — Milestone 6
 
-Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 5 adds private progress-photo checkpoints, restart-safe Telegram intake, explicit analysis/access consent, replaceable media storage, structured vision observations and comparisons, safe deletion, and audit/AIEvent records. Recommendations are never applied automatically. Dashboards, trainer approval UI, device integrations, public galleries, mobile apps, and payments remain out of scope.
+Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 6 adds structured gym configuration, trainer/member assignments, tenant-scoped permissions, gym-specific workout and AI preferences, and a safe trainer approval lifecycle for nutrition adjustments. Full web dashboards, payments, device integrations, public galleries, mobile apps, and per-gym bot tokens remain out of scope.
 
 ## Architecture
 
 ```text
-Telegram Bot ───────┐    ┌─> Workout services ─> Workout engine ───────┐
-Future Mobile App ──┼─> ─┤                                        PostgreSQL
-Future Dashboards ──┘    ├─> Nutrition services ─> Nutrition engine ───┤
-                         ├─> Check-in services ─> Progress/decision ───┤
-                         └─> Photo services ─> Media/Vision boundary ──┘
-                                                    │
-                                                    └─> read-only summary context
+Central AI Platform / SUPER_ADMIN
+                 │
+                 ├─ Gym A ─ Owner ─ Trainers ─ Members
+                 └─ Gym B ─ Owner ─ Trainers ─ Members
+                                 │
+Telegram Bot ─> tenant scope ─> reusable services ─> PostgreSQL
+                                 ├─ Workout / equipment rules
+                                 ├─ Nutrition / versioned plans
+                                 ├─ Progress / approval workflow
+                                 └─ Private media / vision boundary
 ```
 
 Telegram handlers only translate Telegram updates into calls to reusable services. Program selection, prescription validation, ownership checks, session state, and progression live outside the bot, so future mobile, Trainer Dashboard, and Master Admin Dashboard interfaces can use the same behavior and data model.
@@ -205,7 +208,7 @@ The pure trend engine reads approximately the latest 21 days and requires at lea
 
 Goal ranges, the 85% adherence gate, recovery thresholds, calorie deltas, step increments, and step ceiling are centralized in `src/progress/rules.ts`. Slow fat loss with poor adherence recommends a supportive adherence review rather than lower calories. High hunger, very low energy, or very low sleep blocks aggressive reductions. Calorie reductions reuse Milestone 3's BMR-based safety floor. The engine generally recommends one primary lever—calories or steps—not both.
 
-All decisions store stable action enums, concise summaries, reason codes, and structured old/new values. Calorie/activity recommendations require coach approval for gym-linked users. Standalone users still receive stored recommendations, but neither case mutates `NutritionTarget`, `NutritionPlan`, `WorkoutProgram`, or workout prescriptions. Trainer approval and automatic application are future work.
+All decisions store stable action enums, concise summaries, reason codes, and structured old/new values. Eligible calorie recommendations for gym-linked users create one expiring `ApprovalRequest`. The assigned trainer, same-gym owner, or `SUPER_ADMIN` may review it; unrelated trainers and cross-gym actors are blocked. No change occurs before approval.
 
 ### Telegram progress commands
 
@@ -236,6 +239,40 @@ When an earlier completed analysis exists, the current vision request can compar
 - `/photoprogress` — show completed-set count, latest analysis, and previous-set comparison
 - `/deletephotos` — request confirmation before deleting the latest set, its analysis, and its exclusively linked media
 
+## Multi-gym configuration and trainers
+
+`GymSettings` moves product-critical tenant configuration out of arbitrary JSON while retaining the legacy `Gym.themeConfig` and `Gym.aiConfig` fields for compatibility. It stores branding, AI display identity, language, approval policies, training philosophy, default session preferences, equipment configuration, and welcome text. Only a same-gym `OWNER` or `SUPER_ADMIN` can update it; every mutation is audited.
+
+Gym roles remain on `GymMembership`, so a user may be an owner, trainer, or member in different tenants. `TrainerProfile` is platform-wide, while `TrainerPreferences` and `TrainerAssignment` are gym-scoped. Assignment services require an active trainer/owner and active member in the same gym, prevent self-assignment and duplicates, and allow only a gym owner or super admin to assign members. Telegram commands with multiple valid tenant memberships require explicit gym selection and revalidate the selected membership in PostgreSQL.
+
+The effective coach configuration resolver combines immutable core safety rules, structured gym settings, assigned-trainer preferences, and the member profile. Tenant settings can customize identity and training approach but cannot remove safety rules. Workout generation reads `GymExerciseAvailability`, gym equipment settings, trainer exercise/rep preferences, and stored `ExerciseSubstitution` priorities. If no availability rows exist, the global catalogue remains the default; restrictive settings never intentionally produce an empty workout day.
+
+### Approval lifecycle
+
+```text
+AgentDecision
+    ↓ one idempotent request
+ApprovalRequest (PENDING, expires after 14 days)
+    ↓ assigned trainer / gym owner / super admin
+Safety + authorization + stale-state revalidation
+    ↓
+Archive previous ACTIVE NutritionPlan
+    ↓
+Create new NutritionTarget and ACTIVE NutritionPlan version
+```
+
+Approval payloads store only structured current/proposed values and a concise reason. Approval reruns calorie guardrails and requires the active calorie target to exactly match the reviewed `currentValue`. A stale, expired, rejected, or already-reviewed request cannot apply. Rejection records the decision and leaves nutrition history untouched. `WORKOUT_ADJUSTMENT` is supported as an approval type and storage foundation, but automatic workout rewriting is intentionally deferred.
+
+### Trainer and administration Telegram commands
+
+- `/trainer` — show role, scoped gym, assigned-member count, and pending approvals
+- `/mymembers` — show only coaching-safe member summaries; never raw photos, chat history, media, or AI logs
+- `/approvals` — list scoped pending requests with opaque references and approve/reject buttons
+- `/gym` — owner-only tenant counts and AI identity summary
+- `/admin` — `SUPER_ADMIN`-only aggregate platform counts without secrets
+
+Approval callbacks are identifiers, not authorization. Every callback reloads the request and actor scope from PostgreSQL, blocks replay, and applies mutations transactionally where practical.
+
 ## Testing the Telegram flow
 
 1. Start the app and open the bot in Telegram.
@@ -253,6 +290,8 @@ When an earlier completed analysis exists, the current vision request can compar
 13. Use `/photos`, choose analysis consent or storage-only mode, upload FRONT/SIDE/BACK as Telegram photos, then inspect `/latestphotos` and `/photoprogress`.
 14. Restart during a partial photo set and use `/photos` to confirm the next missing view resumes from PostgreSQL.
 15. Use `/deletephotos`, cancel once, then confirm and verify only the latest set and its linked media are removed with an audit record.
+16. As a trainer or owner, use `/trainer`, `/mymembers`, and `/approvals`; with multiple gym roles, explicitly choose the intended tenant.
+17. As an owner, use `/gym`. As the configured platform super admin, use `/admin` for aggregate counts.
 
 The `/join` command can never assign `OWNER` or `TRAINER`. Those roles require a future administrative flow. A Telegram user can only become `SUPER_ADMIN` when their ID matches the server-controlled `SUPER_ADMIN_TELEGRAM_ID`.
 
@@ -272,6 +311,7 @@ src/
   media/                   # private, replaceable media storage contracts/adapters
   vision/                  # safe structured analysis prompts, types, and comparison
   services/                # reusable workout, nutrition, progress, user, gym logic
+  auth/                    # explicit tenant scopes and permission helpers
   utils/                   # safe text helpers
 prisma/
   schema.prisma            # multi-tenant data model
@@ -296,6 +336,8 @@ prisma.config.ts           # Prisma 7 CLI configuration
 - Check-in completion writes deterministic `ProgressEvaluation`, `AgentDecision`, and concise `AuditLog` records.
 - Progress AI context is read-only and uses stored summaries/reason codes rather than invented rationales.
 - Photo analysis requires explicit consent, private visibility is the default, and trainer/gym access requires separate consent plus same-gym permission checks.
+- Approval review requires exact tenant scope and assigned-trainer/owner/super-admin authorization; callbacks never grant permission by themselves.
+- Approved nutrition changes create a new target/plan version only after safety and stale-state validation; prior plans remain archived history.
 - Vision `AIEvent` and audit records contain concise metadata only—never image bytes, Telegram file references, public URLs, or hidden chain-of-thought.
 - Unexpected Telegram update errors are contained so one update does not terminate the process.
 - `SIGINT` and `SIGTERM` stop the bot, API server, and Prisma connection cleanly.

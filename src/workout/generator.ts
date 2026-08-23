@@ -12,7 +12,47 @@ import type {
   GeneratedWorkoutProgram,
   PrescriptionExerciseMetadata,
   ProgramGenerationInput,
+  WorkoutGenerationPreferences,
 } from "./types.js";
+
+function isAllowedExercise(
+  slug: string,
+  metadata: PrescriptionExerciseMetadata,
+  preferences: WorkoutGenerationPreferences,
+): boolean {
+  if (preferences.unavailableSlugs?.has(slug)) return false;
+  if (preferences.allowedEquipment && !preferences.allowedEquipment.has(metadata.equipment)) return false;
+  return true;
+}
+
+function selectExercise(
+  candidates: readonly string[],
+  exerciseMetadata: ReadonlyMap<string, PrescriptionExerciseMetadata>,
+  preferences: WorkoutGenerationPreferences,
+): string | null {
+  const valid = candidates.filter((slug) => {
+    const metadata = exerciseMetadata.get(slug);
+    return metadata ? isAllowedExercise(slug, metadata, preferences) : false;
+  });
+  return valid.find((slug) => preferences.preferredSlugs?.has(slug))
+    ?? valid.find((slug) => preferences.explicitlyAvailableSlugs?.has(slug))
+    ?? valid[0]
+    ?? null;
+}
+
+function findCompatibleExercise(
+  originalSlug: string,
+  exerciseMetadata: ReadonlyMap<string, PrescriptionExerciseMetadata>,
+  preferences: WorkoutGenerationPreferences,
+): string | null {
+  const original = exerciseMetadata.get(originalSlug);
+  if (!original) return null;
+  const compatible = [...exerciseMetadata.entries()]
+    .filter(([, metadata]) => metadata.movementPattern === original.movementPattern
+      && metadata.primaryMuscle === original.primaryMuscle)
+    .map(([slug]) => slug);
+  return selectExercise(compatible, exerciseMetadata, preferences);
+}
 
 export function selectWorkoutSplit(
   experienceLevel: ExperienceLevel,
@@ -114,6 +154,7 @@ export function validatePrescription(prescription: ExercisePrescription): void {
 export function generateWorkoutProgram(
   input: ProgramGenerationInput,
   exerciseMetadata: ReadonlyMap<string, PrescriptionExerciseMetadata>,
+  preferences: WorkoutGenerationPreferences = {},
 ): GeneratedWorkoutProgram {
   const split = selectWorkoutSplit(input.experienceLevel, input.trainingDaysPerWeek);
   const count = exerciseCountForSession(input.sessionMinutes, input.experienceLevel);
@@ -133,17 +174,35 @@ export function generateWorkoutProgram(
   const days = templates.map((day, dayIndex) => ({
     dayNumber: dayIndex + 1,
     name: day.name,
-    notes: null,
+    notes: preferences.preferredWorkoutStyle
+      ? `Trainer preference: ${preferences.preferredWorkoutStyle}`
+      : null,
     exercises: day.exercises.slice(0, count).map((template) => {
       const beginnerOptions = input.trainingPlace === TrainingPlace.HOME
         ? beginnerHomeSwaps
         : beginnerSwaps;
-      const slug = input.experienceLevel === ExperienceLevel.BEGINNER
+      const defaultSlug = input.experienceLevel === ExperienceLevel.BEGINNER
         ? (beginnerOptions[template.slug] ?? template.slug)
         : template.slug;
+      const candidates = [
+        defaultSlug,
+        ...(template.alternatives ?? []),
+        ...(preferences.substitutions?.get(defaultSlug) ?? []),
+      ];
+      const slug = selectExercise(candidates, exerciseMetadata, preferences)
+        ?? findCompatibleExercise(defaultSlug, exerciseMetadata, preferences)
+        // A restrictive tenant configuration must not leave a workout day empty.
+        ?? defaultSlug;
       const metadata = exerciseMetadata.get(slug);
       if (!metadata) throw new Error(`Required exercise is unavailable: ${slug}`);
-      const exercise = { ...template, slug, ...prescriptionFor(input, metadata) };
+      const basePrescription = prescriptionFor(input, metadata);
+      const preferredRange = preferences.preferredRepRange;
+      const exercise = {
+        ...template,
+        slug,
+        ...basePrescription,
+        ...(preferredRange ? { repMin: preferredRange.min, repMax: preferredRange.max } : {}),
+      };
       validatePrescription(exercise);
       return exercise;
     }),

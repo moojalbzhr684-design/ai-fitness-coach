@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { env } from "../config/env.js";
 import { logAIEventError, logAIEventSuccess } from "../services/ai-events.js";
+import { getEffectiveCoachConfiguration } from "../services/coach-configuration.js";
 import { getCoachContext } from "../services/users.js";
 import { safeErrorMessage, truncateText } from "../utils/text.js";
 import { buildCoachInstructions } from "./prompts.js";
@@ -13,7 +14,8 @@ export class CoachUnavailableError extends Error {
 }
 
 export async function askCoach(userId: string, message: string): Promise<string> {
-  const context = await getCoachContext(userId);
+  const configuration = await getEffectiveCoachConfiguration(userId);
+  const context = await getCoachContext(userId, configuration.gymId ?? undefined);
 
   if (!context) {
     throw new Error("User context not found");
@@ -30,7 +32,7 @@ export async function askCoach(userId: string, message: string): Promise<string>
     const client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
     const response = await client.responses.create({
       model: env.OPENAI_MODEL,
-      instructions: buildCoachInstructions(context),
+      instructions: buildCoachInstructions(context, configuration),
       input: message,
     });
     const output = response.output_text.trim();

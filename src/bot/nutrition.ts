@@ -9,6 +9,7 @@ import {
 } from "../services/nutrition-plans.js";
 import { findUserByTelegramId } from "../services/users.js";
 import { normalizeNumericText } from "../utils/text.js";
+import { getActiveGymMemberships, resolveGymMembership } from "../auth/gym-scope.js";
 
 async function currentUser(ctx: Context) {
   if (!ctx.from) return null;
@@ -71,8 +72,20 @@ export async function handleFoodCommand(ctx: Context): Promise<void> {
   }
   const plan = await getActiveNutritionPlan(user.id);
   if (!plan) {
+    const memberships = await getActiveGymMemberships(user.id);
+    const keyboard = new InlineKeyboard();
+    if (memberships.length > 1) {
+      for (const membership of memberships) {
+        keyboard.text(
+          `إنشاء — ${membership.gym.settings?.displayName ?? membership.gym.name}`,
+          `nutrition:create:${membership.id}`,
+        ).row();
+      }
+    } else {
+      keyboard.text("إنشاء نظام الأكل", memberships[0] ? `nutrition:create:${memberships[0].id}` : "nutrition:create");
+    }
     await ctx.reply("🍽 ما عندك نظام أكل بعد.", {
-      reply_markup: new InlineKeyboard().text("إنشاء نظام الأكل", "nutrition:create"),
+      reply_markup: keyboard,
     });
     return;
   }
@@ -87,7 +100,12 @@ export async function handleCreateNutritionCallback(ctx: Context): Promise<void>
     return;
   }
   try {
-    const result = await generateInitialNutritionPlan(user.id);
+    const data = ctx.callbackQuery?.data;
+    const membershipId = data?.split(":")[2];
+    const membership = membershipId
+      ? (await resolveGymMembership({ userId: user.id, membershipId })).membership
+      : null;
+    const result = await generateInitialNutritionPlan(user.id, membership?.gymId);
     await ctx.reply("✅ انبنى نظام أكلك بصورة منظمة وآمنة.");
     for (const message of nutritionPlanMessages(result.plan)) await ctx.reply(message);
     if (result.warnings.length) {
@@ -96,7 +114,9 @@ export async function handleCreateNutritionCallback(ctx: Context): Promise<void>
   } catch (error) {
     if (error instanceof NutritionPlanError) {
       await ctx.reply(
-        error.code === "PROFILE_INCOMPLETE"
+        error.code === "GYM_SELECTION_REQUIRED" || error.code === "INVALID_GYM"
+          ? "اختيار القاعة غير صالح. ارجع إلى /food واختار قاعة مصرح بها."
+          : error.code === "PROFILE_INCOMPLETE"
           ? "معلومات ملف الأكل مو مكتملة. راجع /profile وكمل الإعداد."
           : "ما كدرنا نبني خطة آمنة ضمن الحساسية والقيود المدخلة. عدّل القيود أو استشر اختصاصي تغذية مناسب.",
       );

@@ -15,6 +15,7 @@ import {
 } from "../services/workout-sessions.js";
 import { findUserByTelegramId } from "../services/users.js";
 import { normalizeNumericText } from "../utils/text.js";
+import { getActiveGymMemberships, resolveGymMembership } from "../auth/gym-scope.js";
 
 const splitLabels: Record<WorkoutSplit, string> = {
   [WorkoutSplit.FULL_BODY]: "Full Body",
@@ -62,8 +63,20 @@ export async function handleWorkoutCommand(ctx: Context): Promise<void> {
   }
   const program = await getActiveWorkoutProgram(user.id);
   if (!program) {
+    const memberships = await getActiveGymMemberships(user.id);
+    const keyboard = new InlineKeyboard();
+    if (memberships.length > 1) {
+      for (const membership of memberships) {
+        keyboard.text(
+          `إنشاء — ${membership.gym.settings?.displayName ?? membership.gym.name}`,
+          `workout:create:${membership.id}`,
+        ).row();
+      }
+    } else {
+      keyboard.text("إنشاء جدول التمرين", memberships[0] ? `workout:create:${memberships[0].id}` : "workout:create");
+    }
     await ctx.reply("ما عندك جدول تمرين بعد.", {
-      reply_markup: new InlineKeyboard().text("إنشاء جدول التمرين", "workout:create"),
+      reply_markup: keyboard,
     });
     return;
   }
@@ -78,14 +91,21 @@ export async function handleCreateWorkoutCallback(ctx: Context): Promise<void> {
     return;
   }
   try {
-    const program = await generateInitialWorkoutProgram(user.id);
+    const data = ctx.callbackQuery?.data;
+    const membershipId = data?.split(":")[2];
+    const membership = membershipId
+      ? (await resolveGymMembership({ userId: user.id, membershipId })).membership
+      : null;
+    const program = await generateInitialWorkoutProgram(user.id, membership?.gymId);
     await ctx.reply(
       `✅ انبنى جدول تمرينك\n\n${programText(program)}`,
       { reply_markup: dayKeyboard(program.days) },
     );
   } catch (error) {
     if (error instanceof WorkoutProgramError) {
-      await ctx.reply("ما كدرنا ننشئ الجدول لأن معلومات التمرين مو مكتملة. راجع /profile.");
+      await ctx.reply(error.code === "GYM_SELECTION_REQUIRED" || error.code === "INVALID_GYM"
+        ? "اختيار القاعة غير صالح. ارجع إلى /workout واختار قاعة مصرح بها."
+        : "ما كدرنا ننشئ الجدول لأن معلومات التمرين مو مكتملة. راجع /profile.");
       return;
     }
     throw error;

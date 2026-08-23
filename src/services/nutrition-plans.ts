@@ -1,19 +1,27 @@
 import {
+  Goal,
   MembershipStatus,
   NutritionPlanStatus,
   OnboardingStep,
 } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
-import { calculateNutritionTargets } from "../nutrition/calculator.js";
+import {
+  calculateNutritionTargets,
+  calculateNutritionTargetsForCalories,
+} from "../nutrition/calculator.js";
 import { generateNutritionPlan, NutritionGenerationError } from "../nutrition/generator.js";
 import { archiveActiveNutritionPlans } from "../nutrition/history.js";
-import type { FoodConstraints } from "../nutrition/types.js";
+import type {
+  FoodConstraints,
+  GeneratedNutritionPlan,
+  NutritionCalculation,
+} from "../nutrition/types.js";
 import { validateFoodMacros } from "../nutrition/validation.js";
 import { constraintsFromProfile, toFoodData } from "./foods.js";
 
 export class NutritionPlanError extends Error {
   constructor(
-    public readonly code: "PROFILE_INCOMPLETE" | "GENERATION_FAILED",
+    public readonly code: "PROFILE_INCOMPLETE" | "GENERATION_FAILED" | "GYM_SELECTION_REQUIRED" | "INVALID_GYM",
     message: string,
   ) {
     super(message);
@@ -71,7 +79,19 @@ export async function getMealPlanSummary(userId: string) {
   };
 }
 
-async function createNutritionPlan(userId: string) {
+export interface PreparedNutritionPlanVersion {
+  userId: string;
+  gymId: string | null;
+  goal: Goal;
+  target: NutritionCalculation;
+  generated: GeneratedNutritionPlan;
+}
+
+export async function prepareNutritionPlanVersion(
+  userId: string,
+  approvedCalories?: number,
+  requestedGymId?: string,
+): Promise<PreparedNutritionPlanVersion> {
   const [user, foodRows] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -79,8 +99,7 @@ async function createNutritionPlan(userId: string) {
         profile: true,
         gymMemberships: {
           where: { status: MembershipStatus.ACTIVE, gym: { isActive: true } },
-          orderBy: { createdAt: "desc" },
-          take: 1,
+          orderBy: { createdAt: "asc" },
         },
       },
     }),
@@ -93,14 +112,26 @@ async function createNutritionPlan(userId: string) {
     || profile.mealsPerDay === null || profile.weeklyFoodBudgetIqd === null) {
     throw new NutritionPlanError("PROFILE_INCOMPLETE", "Nutrition profile fields are incomplete");
   }
-  const target = calculateNutritionTargets({
+  if (!requestedGymId && user.gymMemberships.length > 1) {
+    throw new NutritionPlanError("GYM_SELECTION_REQUIRED", "Select a gym before generating a nutrition plan");
+  }
+  const membership = requestedGymId
+    ? user.gymMemberships.find((item) => item.gymId === requestedGymId)
+    : user.gymMemberships[0];
+  if (requestedGymId && !membership) {
+    throw new NutritionPlanError("INVALID_GYM", "Selected gym is outside the user's active memberships");
+  }
+  const calculationInput = {
     age: profile.age,
     sex: profile.sex,
     heightCm: profile.heightCm,
     weightKg: profile.weightKg,
     activityLevel: profile.activityLevel,
     goal: profile.goal,
-  });
+  };
+  const target = approvedCalories === undefined
+    ? calculateNutritionTargets(calculationInput)
+    : calculateNutritionTargetsForCalories(calculationInput, approvedCalories);
   const goal = profile.goal;
   const foods = foodRows.map(toFoodData);
   for (const food of foods) validateFoodMacros(food);
@@ -114,63 +145,78 @@ async function createNutritionPlan(userId: string) {
     }
     throw error;
   }
-  const gymId = user.gymMemberships[0]?.gymId ?? null;
+  const gymId = membership?.gymId ?? null;
+  return { userId, gymId, goal, target, generated };
+}
+
+export async function createPreparedNutritionPlanVersion(
+  transaction: typeof prisma,
+  prepared: PreparedNutritionPlanVersion,
+  now = new Date(),
+) {
+  const { userId, gymId, goal, target, generated } = prepared;
+  await archiveActiveNutritionPlans(transaction, userId, now);
+  const createdTarget = await transaction.nutritionTarget.create({
+    data: {
+      userId,
+      gymId,
+      calories: target.targetCalories,
+      proteinGrams: target.proteinGrams,
+      carbsGrams: target.carbsGrams,
+      fatGrams: target.fatGrams,
+      estimatedMaintenanceCalories: target.maintenanceCalories,
+      goal,
+      calculationVersion: target.calculationVersion,
+    },
+    select: { id: true },
+  });
+  return transaction.nutritionPlan.create({
+    data: {
+      userId,
+      gymId,
+      targetId: createdTarget.id,
+      name: generated.name,
+      status: NutritionPlanStatus.ACTIVE,
+      mealsPerDay: generated.mealsPerDay,
+      dailyCalories: Math.round(generated.totals.calories),
+      dailyProteinGrams: generated.totals.proteinGrams,
+      dailyCarbsGrams: generated.totals.carbsGrams,
+      dailyFatGrams: generated.totals.fatGrams,
+      estimatedDailyCostIqd: generated.estimatedDailyCostIqd,
+      estimatedWeeklyCostIqd: generated.estimatedWeeklyCostIqd,
+      startedAt: now,
+      meals: {
+        create: generated.meals.map((meal) => ({
+          order: meal.order,
+          mealType: meal.mealType,
+          name: meal.name,
+          targetCalories: meal.targetCalories,
+          items: {
+            create: meal.items.map((item, index) => ({
+              foodId: item.foodId,
+              order: index + 1,
+              quantityGrams: item.quantityGrams,
+              calories: item.calories,
+              proteinGrams: item.proteinGrams,
+              carbsGrams: item.carbsGrams,
+              fatGrams: item.fatGrams,
+              notes: item.notes,
+            })),
+          },
+        })),
+      },
+    },
+    select: { id: true },
+  });
+}
+
+async function createNutritionPlan(userId: string, gymId?: string) {
+  const prepared = await prepareNutritionPlanVersion(userId, undefined, gymId);
+  const { generated } = prepared;
   const now = new Date();
   const planId = await prisma.$transaction(async (tx) => {
     const transaction = tx as unknown as typeof prisma;
-    await archiveActiveNutritionPlans(transaction, userId, now);
-    const createdTarget = await transaction.nutritionTarget.create({
-      data: {
-        userId,
-        gymId,
-        calories: target.targetCalories,
-        proteinGrams: target.proteinGrams,
-        carbsGrams: target.carbsGrams,
-        fatGrams: target.fatGrams,
-        estimatedMaintenanceCalories: target.maintenanceCalories,
-        goal,
-        calculationVersion: target.calculationVersion,
-      },
-      select: { id: true },
-    });
-    const created = await transaction.nutritionPlan.create({
-      data: {
-        userId,
-        gymId,
-        targetId: createdTarget.id,
-        name: generated.name,
-        status: NutritionPlanStatus.ACTIVE,
-        mealsPerDay: generated.mealsPerDay,
-        dailyCalories: Math.round(generated.totals.calories),
-        dailyProteinGrams: generated.totals.proteinGrams,
-        dailyCarbsGrams: generated.totals.carbsGrams,
-        dailyFatGrams: generated.totals.fatGrams,
-        estimatedDailyCostIqd: generated.estimatedDailyCostIqd,
-        estimatedWeeklyCostIqd: generated.estimatedWeeklyCostIqd,
-        startedAt: now,
-        meals: {
-          create: generated.meals.map((meal) => ({
-            order: meal.order,
-            mealType: meal.mealType,
-            name: meal.name,
-            targetCalories: meal.targetCalories,
-            items: {
-              create: meal.items.map((item, index) => ({
-                foodId: item.foodId,
-                order: index + 1,
-                quantityGrams: item.quantityGrams,
-                calories: item.calories,
-                proteinGrams: item.proteinGrams,
-                carbsGrams: item.carbsGrams,
-                fatGrams: item.fatGrams,
-                notes: item.notes,
-              })),
-            },
-          })),
-        },
-      },
-      select: { id: true },
-    });
+    const created = await createPreparedNutritionPlanVersion(transaction, prepared, now);
     return created.id;
   });
   const plan = await prisma.nutritionPlan.findUnique({
@@ -181,10 +227,10 @@ async function createNutritionPlan(userId: string) {
   return { plan, warnings: generated.warnings };
 }
 
-export async function generateInitialNutritionPlan(userId: string) {
-  return createNutritionPlan(userId);
+export async function generateInitialNutritionPlan(userId: string, gymId?: string) {
+  return createNutritionPlan(userId, gymId);
 }
 
-export async function regenerateNutritionPlan(userId: string) {
-  return createNutritionPlan(userId);
+export async function regenerateNutritionPlan(userId: string, gymId?: string) {
+  return createNutritionPlan(userId, gymId);
 }

@@ -7,9 +7,13 @@ import {
 import { prisma } from "../lib/prisma.js";
 import { generateWorkoutProgram } from "../workout/generator.js";
 import type { PrescriptionExerciseMetadata } from "../workout/types.js";
+import { getGymWorkoutPreferences } from "./gym-exercises.js";
 
 export class WorkoutProgramError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    public readonly code: "PROFILE_INCOMPLETE" | "GYM_SELECTION_REQUIRED" | "INVALID_GYM" | "EXERCISE_UNAVAILABLE" = "PROFILE_INCOMPLETE",
+  ) {
     super(message);
     this.name = "WorkoutProgramError";
   }
@@ -65,7 +69,7 @@ export async function getWorkoutProgress(userId: string, exerciseId: string) {
   });
 }
 
-export async function generateInitialWorkoutProgram(userId: string) {
+export async function generateInitialWorkoutProgram(userId: string, requestedGymId?: string) {
   const [user, exercises] = await Promise.all([
     prisma.user.findUnique({
       where: { id: userId },
@@ -73,8 +77,7 @@ export async function generateInitialWorkoutProgram(userId: string) {
         profile: true,
         gymMemberships: {
           where: { status: MembershipStatus.ACTIVE, gym: { isActive: true } },
-          orderBy: { createdAt: "desc" },
-          take: 1,
+          orderBy: { createdAt: "asc" },
         },
       },
     }),
@@ -88,6 +91,17 @@ export async function generateInitialWorkoutProgram(userId: string) {
   if (!experienceLevel || !goal || trainingDaysPerWeek === null || !trainingPlace || sessionMinutes === null) {
     throw new WorkoutProgramError("Workout profile fields are incomplete");
   }
+  if (!requestedGymId && user.gymMemberships.length > 1) {
+    throw new WorkoutProgramError("Select a gym before generating a workout program", "GYM_SELECTION_REQUIRED");
+  }
+  const membership = requestedGymId
+    ? user.gymMemberships.find((item) => item.gymId === requestedGymId)
+    : user.gymMemberships[0];
+  if (requestedGymId && !membership) {
+    throw new WorkoutProgramError("The selected gym is outside the user's active memberships", "INVALID_GYM");
+  }
+  const gymId = membership?.gymId ?? null;
+  const preferences = gymId ? await getGymWorkoutPreferences(gymId, userId) : undefined;
 
   const metadata = new Map<string, PrescriptionExerciseMetadata>(
     exercises.map((item) => [item.slug, {
@@ -100,9 +114,9 @@ export async function generateInitialWorkoutProgram(userId: string) {
   const generated = generateWorkoutProgram(
     { experienceLevel, goal, trainingDaysPerWeek, trainingPlace, sessionMinutes },
     metadata,
+    preferences,
   );
   const exerciseIds = new Map(exercises.map((item) => [item.slug, item.id]));
-  const gymId = user.gymMemberships[0]?.gymId ?? null;
   const now = new Date();
 
   return prisma.$transaction(async (tx) => {
@@ -129,7 +143,7 @@ export async function generateInitialWorkoutProgram(userId: string) {
             exercises: {
               create: day.exercises.map((item, index) => {
                 const exerciseId = exerciseIds.get(item.slug);
-                if (!exerciseId) throw new WorkoutProgramError(`Exercise not found: ${item.slug}`);
+                if (!exerciseId) throw new WorkoutProgramError(`Exercise not found: ${item.slug}`, "EXERCISE_UNAVAILABLE");
                 return {
                   exerciseId,
                   order: index + 1,

@@ -15,6 +15,7 @@ import {
   setPhotoPrivacyPreferences,
 } from "../services/progress-photos.js";
 import { findUserByTelegramId } from "../services/users.js";
+import { getActiveGymMemberships, resolveGymMembership } from "../auth/gym-scope.js";
 
 const viewLabels: Record<PhotoView, string> = {
   [PhotoView.FRONT]: "الأمامية FRONT",
@@ -57,6 +58,20 @@ export async function handlePhotosCommand(ctx: Context): Promise<void> {
     await sendViewPrompt(ctx, nextMissingPhotoView(draft.photos.map((photo) => photo.view)));
     return;
   }
+  const memberships = await getActiveGymMemberships(user.id);
+  if (memberships.length > 1) {
+    const keyboard = new InlineKeyboard();
+    for (const membership of memberships) {
+      keyboard.text(membership.gym.settings?.displayName ?? membership.gym.name, `photos:gym:${membership.id}`).row();
+    }
+    await ctx.reply("اختار القاعة المرتبطة بمجموعة الصور:", { reply_markup: keyboard });
+    return;
+  }
+  await sendConsentPrompt(ctx, memberships[0]?.id);
+}
+
+async function sendConsentPrompt(ctx: Context, membershipId?: string): Promise<void> {
+  const suffix = membershipId ? `:${membershipId}` : "";
   await ctx.reply([
     "📸 رفع صور التقدم",
     "",
@@ -66,11 +81,20 @@ export async function handlePhotosCommand(ctx: Context): Promise<void> {
     "كل الصور تبقى خاصة افتراضياً، ووصول المدرب أو القاعة ما يصير تلقائياً.",
   ].join("\n"), {
     reply_markup: new InlineKeyboard()
-      .text("أوافق على تحليل الصور", "photos:consent:analyze")
+      .text("أوافق على تحليل الصور", `photos:consent:analyze${suffix}`)
       .row()
-      .text("رفع بدون تحليل", "photos:consent:store")
-      .text("إلغاء", "photos:consent:cancel"),
+      .text("رفع بدون تحليل", `photos:consent:store${suffix}`)
+      .text("إلغاء", `photos:consent:cancel${suffix}`),
   });
+}
+
+export async function handlePhotoGymCallback(ctx: Context): Promise<void> {
+  await ctx.answerCallbackQuery();
+  const user = await currentUser(ctx);
+  const membershipId = ctx.callbackQuery?.data?.split(":")[2];
+  if (!user || !membershipId) return;
+  await resolveGymMembership({ userId: user.id, membershipId });
+  await sendConsentPrompt(ctx, membershipId);
 }
 
 export async function handlePhotoConsentCallback(ctx: Context): Promise<void> {
@@ -83,6 +107,7 @@ export async function handlePhotoConsentCallback(ctx: Context): Promise<void> {
     return;
   }
   const choice = data.split(":")[2];
+  const membershipId = data.split(":")[3];
   if (choice === "cancel") {
     await ctx.reply("تم إلغاء رفع الصور.");
     return;
@@ -92,7 +117,10 @@ export async function handlePhotoConsentCallback(ctx: Context): Promise<void> {
     await setPhotoPrivacyPreferences(user.id, { allowVisionAnalysis: true });
   }
   try {
-    const result = await getOrCreateProgressPhotoSet(user.id, analysisRequested);
+    const membership = membershipId
+      ? (await resolveGymMembership({ userId: user.id, membershipId })).membership
+      : null;
+    const result = await getOrCreateProgressPhotoSet(user.id, analysisRequested, membership?.gymId);
     await ctx.reply(
       result.resumed
         ? "نكمل مجموعة الصور المفتوحة."

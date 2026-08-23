@@ -136,14 +136,14 @@ export async function getUserProfile(telegramId: bigint) {
           status: MembershipStatus.ACTIVE,
           gym: { isActive: true },
         },
-        include: { gym: true },
+        include: { gym: { include: { settings: true } } },
         orderBy: { createdAt: "desc" },
       },
     },
   });
 }
 
-export async function getCoachContext(userId: string) {
+export async function getCoachContext(userId: string, gymId?: string) {
   return prisma.user.findUnique({
     where: { id: userId },
     include: {
@@ -152,8 +152,9 @@ export async function getCoachContext(userId: string) {
         where: {
           status: MembershipStatus.ACTIVE,
           gym: { isActive: true },
+          ...(gymId ? { gymId } : {}),
         },
-        include: { gym: true },
+        include: { gym: { include: { settings: true } } },
         orderBy: { createdAt: "desc" },
         take: 1,
       },

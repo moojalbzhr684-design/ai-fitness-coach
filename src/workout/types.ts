@@ -16,6 +16,16 @@ export interface ProgramGenerationInput {
   trainingPlace: TrainingPlace;
   sessionMinutes: number;
 }
+
+export interface WorkoutGenerationPreferences {
+  unavailableSlugs?: ReadonlySet<string>;
+  explicitlyAvailableSlugs?: ReadonlySet<string>;
+  allowedEquipment?: ReadonlySet<EquipmentType>;
+  preferredSlugs?: ReadonlySet<string>;
+  preferredWorkoutStyle?: string | null;
+  preferredRepRange?: { min: number; max: number };
+  substitutions?: ReadonlyMap<string, readonly string[]>;
+}
 export interface ExerciseTemplate {
   slug: string;
   alternatives?: string[];

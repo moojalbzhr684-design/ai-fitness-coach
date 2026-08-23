@@ -3,6 +3,7 @@ import { askCoach, CoachUnavailableError } from "../ai/coach.js";
 import { env } from "../config/env.js";
 import { OnboardingStep } from "../generated/prisma/client.js";
 import { findUserByTelegramId, upsertTelegramUser } from "../services/users.js";
+import { getEffectiveGymBranding } from "../services/gym-settings.js";
 import { safeErrorMessage } from "../utils/text.js";
 import { handleJoinCommand } from "./gym.js";
 import {
@@ -14,6 +15,7 @@ import { handleProfileCommand } from "./profile.js";
 import {
   handleCheckInCallback,
   handleCheckInCommand,
+  handleCheckInGymCallback,
   handleCheckInDraftText,
   handleCheckInStatusCommand,
   handleProgressCommand,
@@ -39,12 +41,22 @@ import {
   handleDeletePhotosCallback,
   handleDeletePhotosCommand,
   handleLatestPhotosCommand,
+  handlePhotoGymCallback,
   handlePhotoConsentCallback,
   handlePhotoProgressCommand,
   handlePhotosCommand,
   handleProgressPhotoMessage,
   handleUnsupportedPhotoDocument,
 } from "./photos.js";
+import {
+  handleAdminCommand,
+  handleApprovalCallback,
+  handleApprovalsCommand,
+  handleGymCommand,
+  handleMyMembersCommand,
+  handleTenantSelectionCallback,
+  handleTrainerCommand,
+} from "./trainer.js";
 
 export function createTelegramBot(): Bot {
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
@@ -64,8 +76,17 @@ export function createTelegramBot(): Bot {
     );
 
     if (user.onboardingStep === OnboardingStep.COMPLETE) {
+      const branding = await getEffectiveGymBranding(user.id);
+      const brandLines = branding.branding
+        ? [
+            ``,
+            `🏋️ ${branding.branding.displayName}`,
+            `مدربك: ${branding.branding.aiDisplayName}`,
+            ...(branding.branding.welcomeMessage ? [branding.branding.welcomeMessage] : []),
+          ]
+        : [];
       await ctx.reply(
-        "هلا بيك من جديد 👋\nملفك الرياضي جاهز. استخدم /profile أو /join، أو اسألني سؤال عام عن اللياقة.",
+        ["هلا بيك من جديد 👋", "ملفك الرياضي جاهز. استخدم /profile أو /join، أو اسألني سؤال عام عن اللياقة.", ...brandLines].join("\n"),
       );
       return;
     }
@@ -91,6 +112,11 @@ export function createTelegramBot(): Bot {
   bot.command("latestphotos", handleLatestPhotosCommand);
   bot.command("photoprogress", handlePhotoProgressCommand);
   bot.command("deletephotos", handleDeletePhotosCommand);
+  bot.command("trainer", handleTrainerCommand);
+  bot.command("mymembers", handleMyMembersCommand);
+  bot.command("approvals", handleApprovalsCommand);
+  bot.command("gym", handleGymCommand);
+  bot.command("admin", handleAdminCommand);
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
@@ -113,6 +139,11 @@ export function createTelegramBot(): Bot {
         "/latestphotos - معلومات آخر مجموعة صور",
         "/photoprogress - ملخص تقدم الصور",
         "/deletephotos - حذف آخر مجموعة بعد التأكيد",
+        "/trainer - لوحة الكابتن",
+        "/mymembers - المشتركين المسؤول عنهم",
+        "/approvals - طلبات الموافقة",
+        "/gym - ملخص إدارة القاعة",
+        "/admin - ملخص مدير المنصة",
         "/help - المساعدة",
         "",
         "بعد ما تكمل الإعداد، تكدر تسألني أسئلة عامة عن الرياضة واللياقة.",
@@ -121,13 +152,17 @@ export function createTelegramBot(): Bot {
   });
 
   bot.callbackQuery(/^onboarding:/, handleOnboardingCallback);
-  bot.callbackQuery("workout:create", handleCreateWorkoutCallback);
+  bot.callbackQuery(/^workout:create(?::|$)/, handleCreateWorkoutCallback);
   bot.callbackQuery(/^workout:day:/, handleWorkoutDayCallback);
   bot.callbackQuery(/^workout:start:/, handleStartWorkoutCallback);
-  bot.callbackQuery("nutrition:create", handleCreateNutritionCallback);
-  bot.callbackQuery(/^checkin:/, handleCheckInCallback);
+  bot.callbackQuery(/^nutrition:create(?::|$)/, handleCreateNutritionCallback);
+  bot.callbackQuery(/^checkin:gym:/, handleCheckInGymCallback);
+  bot.callbackQuery(/^checkin:(?!gym:)/, handleCheckInCallback);
   bot.callbackQuery(/^photos:consent:/, handlePhotoConsentCallback);
+  bot.callbackQuery(/^photos:gym:/, handlePhotoGymCallback);
   bot.callbackQuery(/^photos:delete:/, handleDeletePhotosCallback);
+  bot.callbackQuery(/^tenant:/, handleTenantSelectionCallback);
+  bot.callbackQuery(/^approval:/, handleApprovalCallback);
 
   bot.on("message:photo", handleProgressPhotoMessage);
   bot.on("message:document", handleUnsupportedPhotoDocument);
