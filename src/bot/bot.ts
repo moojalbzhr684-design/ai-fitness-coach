@@ -11,6 +11,15 @@ import {
   sendOnboardingPrompt,
 } from "./onboarding.js";
 import { handleProfileCommand } from "./profile.js";
+import {
+  handleCreateWorkoutCallback,
+  handleCurrentWorkoutCommand,
+  handleFinishWorkoutCommand,
+  handleLogSetCommand,
+  handleStartWorkoutCallback,
+  handleWorkoutCommand,
+  handleWorkoutDayCallback,
+} from "./workout.js";
 
 export function createTelegramBot(): Bot {
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
@@ -41,6 +50,10 @@ export function createTelegramBot(): Bot {
 
   bot.command("profile", handleProfileCommand);
   bot.command("join", async (ctx) => handleJoinCommand(ctx, ctx.match));
+  bot.command("workout", handleWorkoutCommand);
+  bot.command("currentworkout", handleCurrentWorkoutCommand);
+  bot.command("logset", async (ctx) => handleLogSetCommand(ctx, ctx.match));
+  bot.command("finishworkout", handleFinishWorkoutCommand);
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
@@ -48,6 +61,10 @@ export function createTelegramBot(): Bot {
         "/start - بدء أو متابعة الإعداد",
         "/profile - عرض معلوماتك",
         "/join CODE - الانضمام إلى قاعة",
+        "/workout - عرض أو إنشاء جدول التمرين",
+        "/currentworkout - عرض التمرين المفتوح",
+        "/logset - تسجيل مجموعة",
+        "/finishworkout - إنهاء التمرين",
         "/help - المساعدة",
         "",
         "بعد ما تكمل الإعداد، تكدر تسألني أسئلة عامة عن الرياضة واللياقة.",
@@ -56,6 +73,9 @@ export function createTelegramBot(): Bot {
   });
 
   bot.callbackQuery(/^onboarding:/, handleOnboardingCallback);
+  bot.callbackQuery("workout:create", handleCreateWorkoutCallback);
+  bot.callbackQuery(/^workout:day:/, handleWorkoutDayCallback);
+  bot.callbackQuery(/^workout:start:/, handleStartWorkoutCallback);
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();

@@ -8,6 +8,8 @@ import {
   Sex,
   SystemRole,
   TrainingPlace,
+  WorkoutProgramStatus,
+  WorkoutSessionStatus,
 } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 
@@ -125,6 +127,37 @@ export async function getCoachContext(userId: string) {
         include: { gym: true },
         orderBy: { createdAt: "desc" },
         take: 1,
+      },
+      workoutPrograms: {
+        where: { status: WorkoutProgramStatus.ACTIVE },
+        orderBy: { startedAt: "desc" },
+        take: 1,
+        include: {
+          days: {
+            orderBy: { dayNumber: "asc" },
+            select: { id: true, dayNumber: true, name: true },
+          },
+        },
+      },
+      workoutSessions: {
+        where: { status: WorkoutSessionStatus.IN_PROGRESS },
+        orderBy: { startedAt: "desc" },
+        take: 1,
+        include: {
+          workoutDay: { select: { id: true, dayNumber: true, name: true } },
+          exerciseLogs: {
+            orderBy: { order: "asc" },
+            select: {
+              order: true,
+              exercise: { select: { name: true } },
+              setLogs: {
+                where: { isWarmup: false },
+                orderBy: { setNumber: "asc" },
+                select: { reps: true, weightKg: true, rir: true },
+              },
+            },
+          },
+        },
       },
     },
   });

@@ -91,6 +91,74 @@ enum AIEventStatus {
   ERROR
 }
 
+enum MuscleGroup {
+  CHEST
+  BACK
+  SHOULDERS
+  BICEPS
+  TRICEPS
+  QUADS
+  HAMSTRINGS
+  GLUTES
+  CALVES
+  ABS
+  FOREARMS
+  FULL_BODY
+}
+
+enum ExerciseType {
+  COMPOUND
+  ISOLATION
+}
+
+enum EquipmentType {
+  BARBELL
+  DUMBBELL
+  MACHINE
+  CABLE
+  BODYWEIGHT
+  SMITH_MACHINE
+  EZ_BAR
+  KETTLEBELL
+  OTHER
+}
+
+enum MovementPattern {
+  HORIZONTAL_PUSH
+  VERTICAL_PUSH
+  HORIZONTAL_PULL
+  VERTICAL_PULL
+  SQUAT
+  HINGE
+  LUNGE
+  ELBOW_FLEXION
+  ELBOW_EXTENSION
+  SHOULDER_ABDUCTION
+  CALF_RAISE
+  CORE
+  OTHER
+}
+
+enum WorkoutSplit {
+  FULL_BODY
+  UPPER_LOWER
+  PUSH_PULL_LEGS
+  CUSTOM
+}
+
+enum WorkoutProgramStatus {
+  ACTIVE
+  ARCHIVED
+  DRAFT
+}
+
+enum WorkoutSessionStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
 model User {
   id               String         @id @default(cuid())
   telegramId       BigInt         @unique
@@ -102,12 +170,14 @@ model User {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  profile        UserProfile?
-  gymMemberships GymMembership[]
-  media          Media[]
-  aiEvents       AIEvent[]
-  agentDecisions AgentDecision[]
-  auditLogs      AuditLog[]      @relation("AuditActor")
+  profile         UserProfile?
+  gymMemberships  GymMembership[]
+  media           Media[]
+  aiEvents        AIEvent[]
+  agentDecisions  AgentDecision[]
+  auditLogs       AuditLog[]       @relation("AuditActor")
+  workoutPrograms WorkoutProgram[]
+  workoutSessions WorkoutSession[]
 
   @@index([systemRole])
   @@index([onboardingStep])
@@ -154,11 +224,13 @@ model Gym {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  memberships    GymMembership[]
-  media          Media[]
-  aiEvents       AIEvent[]
-  agentDecisions AgentDecision[]
-  auditLogs      AuditLog[]
+  memberships     GymMembership[]
+  media           Media[]
+  aiEvents        AIEvent[]
+  agentDecisions  AgentDecision[]
+  auditLogs       AuditLog[]
+  workoutPrograms WorkoutProgram[]
+  workoutSessions WorkoutSession[]
 
   @@index([isActive])
 }
@@ -264,4 +336,167 @@ model AuditLog {
   @@index([gymId, createdAt])
   @@index([action, createdAt])
   @@index([targetType, targetId])
+}
+
+model Exercise {
+  id               String          @id @default(cuid())
+  name             String
+  slug             String          @unique
+  primaryMuscle    MuscleGroup
+  secondaryMuscles Json?
+  exerciseType     ExerciseType
+  equipment        EquipmentType
+  movementPattern  MovementPattern
+  difficulty       ExperienceLevel
+  instructions     String?
+  videoUrl         String?
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  workoutDayExercises WorkoutDayExercise[]
+  exerciseLogs        ExerciseLog[]
+  substitutions       ExerciseSubstitution[] @relation("ExerciseSubstitutions")
+  substitutedBy       ExerciseSubstitution[] @relation("SubstituteExercise")
+
+  @@index([primaryMuscle, isActive])
+  @@index([movementPattern, equipment, isActive])
+  @@index([difficulty, isActive])
+}
+
+model ExerciseSubstitution {
+  id                   String  @id @default(cuid())
+  exerciseId           String
+  substituteExerciseId String
+  priority             Int     @default(1)
+  reason               String?
+
+  exercise           Exercise @relation("ExerciseSubstitutions", fields: [exerciseId], references: [id], onDelete: Cascade)
+  substituteExercise Exercise @relation("SubstituteExercise", fields: [substituteExerciseId], references: [id], onDelete: Cascade)
+
+  @@unique([exerciseId, substituteExerciseId])
+  @@index([exerciseId, priority])
+  @@index([substituteExerciseId])
+}
+
+model WorkoutProgram {
+  id                  String               @id @default(cuid())
+  userId              String
+  gymId               String?
+  name                String
+  split               WorkoutSplit
+  status              WorkoutProgramStatus
+  trainingDaysPerWeek Int
+  startedAt           DateTime
+  endedAt             DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym      Gym?             @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  days     WorkoutDay[]
+  sessions WorkoutSession[]
+
+  @@index([userId, status])
+  @@index([gymId, status])
+  @@index([userId, startedAt])
+}
+
+model WorkoutDay {
+  id        String   @id @default(cuid())
+  programId String
+  dayNumber Int
+  name      String
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  program   WorkoutProgram       @relation(fields: [programId], references: [id], onDelete: Cascade)
+  exercises WorkoutDayExercise[]
+  sessions  WorkoutSession[]
+
+  @@unique([programId, dayNumber])
+  @@index([programId])
+}
+
+model WorkoutDayExercise {
+  id               String   @id @default(cuid())
+  workoutDayId     String
+  exerciseId       String
+  order            Int
+  sets             Int
+  repMin           Int
+  repMax           Int
+  restSeconds      Int
+  rirTarget        Int?
+  startingWeightKg Float?
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workoutDay WorkoutDay @relation(fields: [workoutDayId], references: [id], onDelete: Cascade)
+  exercise   Exercise   @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+
+  @@unique([workoutDayId, order])
+  @@index([workoutDayId])
+  @@index([exerciseId])
+}
+
+model WorkoutSession {
+  id              String               @id @default(cuid())
+  userId          String
+  gymId           String?
+  programId       String?
+  workoutDayId    String?
+  status          WorkoutSessionStatus
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationMinutes Int?
+  userNotes       String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym          Gym?            @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  program      WorkoutProgram? @relation(fields: [programId], references: [id], onDelete: SetNull)
+  workoutDay   WorkoutDay?     @relation(fields: [workoutDayId], references: [id], onDelete: SetNull)
+  exerciseLogs ExerciseLog[]
+
+  @@index([userId, status])
+  @@index([userId, createdAt])
+  @@index([gymId, createdAt])
+  @@index([programId])
+  @@index([workoutDayId])
+}
+
+model ExerciseLog {
+  id               String   @id @default(cuid())
+  workoutSessionId String
+  exerciseId       String
+  order            Int
+  createdAt        DateTime @default(now())
+
+  workoutSession WorkoutSession @relation(fields: [workoutSessionId], references: [id], onDelete: Cascade)
+  exercise       Exercise       @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  setLogs        SetLog[]
+
+  @@unique([workoutSessionId, order])
+  @@index([workoutSessionId])
+  @@index([exerciseId])
+}
+
+model SetLog {
+  id            String   @id @default(cuid())
+  exerciseLogId String
+  setNumber     Int
+  weightKg      Float?
+  reps          Int
+  rir           Int?
+  isWarmup      Boolean  @default(false)
+  completedAt   DateTime @default(now())
+
+  exerciseLog ExerciseLog @relation(fields: [exerciseLogId], references: [id], onDelete: Cascade)
+
+  @@unique([exerciseLogId, setNumber])
+  @@index([exerciseLogId, completedAt])
 }

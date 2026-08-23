@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
+import { seedExercises } from "./exercise-seed.js";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -31,6 +32,10 @@ async function main(): Promise<void> {
   });
 
   console.log(`Seeded gym: ${gym.name} (${gym.joinCode})`);
+  const workoutSeed = await seedExercises(prisma);
+  console.log(
+    `Seeded ${workoutSeed.exerciseCount} exercises and ${workoutSeed.substitutionCount} substitutions.`,
+  );
 }
 
 try {
