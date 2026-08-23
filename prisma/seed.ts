@@ -2,6 +2,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { seedExercises } from "./exercise-seed.js";
+import { seedFoods } from "./food-seed.js";
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -35,6 +36,10 @@ async function main(): Promise<void> {
   const workoutSeed = await seedExercises(prisma);
   console.log(
     `Seeded ${workoutSeed.exerciseCount} exercises and ${workoutSeed.substitutionCount} substitutions.`,
+  );
+  const foodSeed = await seedFoods(prisma);
+  console.log(
+    `Seeded ${foodSeed.foodCount} foods (${foodSeed.iraqiCommonCount} Iraqi/common) and ${foodSeed.substitutionCount} food substitutions.`,
   );
 }
 

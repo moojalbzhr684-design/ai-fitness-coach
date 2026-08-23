@@ -159,6 +159,49 @@ enum WorkoutSessionStatus {
   SKIPPED
 }
 
+enum NutritionPlanStatus {
+  ACTIVE
+  ARCHIVED
+  DRAFT
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+  PRE_WORKOUT
+  POST_WORKOUT
+  OTHER
+}
+
+enum FoodCategory {
+  PROTEIN
+  CARBOHYDRATE
+  FAT
+  VEGETABLE
+  FRUIT
+  DAIRY
+  LEGUME
+  MIXED_MEAL
+  OTHER
+}
+
+enum FoodUnit {
+  GRAM
+  MILLILITER
+  PIECE
+}
+
+enum DietaryTag {
+  HALAL
+  VEGETARIAN
+  VEGAN
+  GLUTEN_FREE
+  DAIRY_FREE
+  OTHER
+}
+
 model User {
   id               String         @id @default(cuid())
   telegramId       BigInt         @unique
@@ -170,14 +213,16 @@ model User {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  profile         UserProfile?
-  gymMemberships  GymMembership[]
-  media           Media[]
-  aiEvents        AIEvent[]
-  agentDecisions  AgentDecision[]
-  auditLogs       AuditLog[]       @relation("AuditActor")
-  workoutPrograms WorkoutProgram[]
-  workoutSessions WorkoutSession[]
+  profile          UserProfile?
+  gymMemberships   GymMembership[]
+  media            Media[]
+  aiEvents         AIEvent[]
+  agentDecisions   AgentDecision[]
+  auditLogs        AuditLog[]        @relation("AuditActor")
+  workoutPrograms  WorkoutProgram[]
+  workoutSessions  WorkoutSession[]
+  nutritionTargets NutritionTarget[]
+  nutritionPlans   NutritionPlan[]
 
   @@index([systemRole])
   @@index([onboardingStep])
@@ -224,13 +269,15 @@ model Gym {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  memberships     GymMembership[]
-  media           Media[]
-  aiEvents        AIEvent[]
-  agentDecisions  AgentDecision[]
-  auditLogs       AuditLog[]
-  workoutPrograms WorkoutProgram[]
-  workoutSessions WorkoutSession[]
+  memberships      GymMembership[]
+  media            Media[]
+  aiEvents         AIEvent[]
+  agentDecisions   AgentDecision[]
+  auditLogs        AuditLog[]
+  workoutPrograms  WorkoutProgram[]
+  workoutSessions  WorkoutSession[]
+  nutritionTargets NutritionTarget[]
+  nutritionPlans   NutritionPlan[]
 
   @@index([isActive])
 }
@@ -499,4 +546,143 @@ model SetLog {
 
   @@unique([exerciseLogId, setNumber])
   @@index([exerciseLogId, completedAt])
+}
+
+model Food {
+  id                     String       @id @default(cuid())
+  name                   String
+  nameAr                 String?
+  slug                   String       @unique
+  category               FoodCategory
+  caloriesPer100g        Float
+  proteinPer100g         Float
+  carbsPer100g           Float
+  fatPer100g             Float
+  fiberPer100g           Float?
+  defaultUnit            FoodUnit     @default(GRAM)
+  defaultServingGrams    Float?
+  estimatedPriceIqdPerKg Float?
+  dietaryTags            Json?
+  allergenTags           Json?
+  isIraqiCommon          Boolean      @default(false)
+  isActive               Boolean      @default(true)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  mealItems     MealItem[]
+  substitutions FoodSubstitution[] @relation("FoodSubstitutions")
+  substitutedBy FoodSubstitution[] @relation("SubstituteFood")
+
+  @@index([category])
+  @@index([isIraqiCommon])
+  @@index([isActive])
+  @@index([category, isActive])
+}
+
+model FoodSubstitution {
+  id               String   @id @default(cuid())
+  foodId           String
+  substituteFoodId String
+  priority         Int      @default(1)
+  reason           String?
+  createdAt        DateTime @default(now())
+
+  food           Food @relation("FoodSubstitutions", fields: [foodId], references: [id], onDelete: Cascade)
+  substituteFood Food @relation("SubstituteFood", fields: [substituteFoodId], references: [id], onDelete: Cascade)
+
+  @@unique([foodId, substituteFoodId])
+  @@index([foodId, priority])
+  @@index([substituteFoodId])
+}
+
+model NutritionTarget {
+  id                           String   @id @default(cuid())
+  userId                       String
+  gymId                        String?
+  calories                     Int
+  proteinGrams                 Float
+  carbsGrams                   Float
+  fatGrams                     Float
+  estimatedMaintenanceCalories Int?
+  goal                         Goal
+  calculationVersion           String
+  createdAt                    DateTime @default(now())
+  updatedAt                    DateTime @updatedAt
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym   Gym?            @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  plans NutritionPlan[]
+
+  @@index([userId, createdAt])
+  @@index([gymId, createdAt])
+  @@index([goal, calculationVersion])
+}
+
+model NutritionPlan {
+  id                     String              @id @default(cuid())
+  userId                 String
+  gymId                  String?
+  targetId               String
+  name                   String
+  status                 NutritionPlanStatus
+  mealsPerDay            Int
+  dailyCalories          Int
+  dailyProteinGrams      Float
+  dailyCarbsGrams        Float
+  dailyFatGrams          Float
+  estimatedDailyCostIqd  Int?
+  estimatedWeeklyCostIqd Int?
+  startedAt              DateTime
+  endedAt                DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym    Gym?            @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  target NutritionTarget @relation(fields: [targetId], references: [id], onDelete: Restrict)
+  meals  Meal[]
+
+  @@index([userId, status])
+  @@index([gymId, status])
+  @@index([targetId])
+  @@index([userId, startedAt])
+}
+
+model Meal {
+  id              String   @id @default(cuid())
+  nutritionPlanId String
+  order           Int
+  mealType        MealType
+  name            String
+  targetCalories  Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  nutritionPlan NutritionPlan @relation(fields: [nutritionPlanId], references: [id], onDelete: Cascade)
+  items         MealItem[]
+
+  @@unique([nutritionPlanId, order])
+  @@index([nutritionPlanId])
+}
+
+model MealItem {
+  id            String   @id @default(cuid())
+  mealId        String
+  foodId        String
+  order         Int
+  quantityGrams Float
+  calories      Float
+  proteinGrams  Float
+  carbsGrams    Float
+  fatGrams      Float
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  meal Meal @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  food Food @relation(fields: [foodId], references: [id], onDelete: Restrict)
+
+  @@unique([mealId, order])
+  @@index([mealId])
+  @@index([foodId])
 }

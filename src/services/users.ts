@@ -4,6 +4,7 @@ import {
   Goal,
   GymRole,
   MembershipStatus,
+  NutritionPlanStatus,
   OnboardingStep,
   Sex,
   SystemRole,
@@ -154,6 +155,28 @@ export async function getCoachContext(userId: string) {
                 where: { isWarmup: false },
                 orderBy: { setNumber: "asc" },
                 select: { reps: true, weightKg: true, rir: true },
+              },
+            },
+          },
+        },
+      },
+      nutritionPlans: {
+        where: { status: NutritionPlanStatus.ACTIVE },
+        orderBy: { startedAt: "desc" },
+        take: 1,
+        include: {
+          target: true,
+          meals: {
+            orderBy: { order: "asc" },
+            select: {
+              order: true,
+              name: true,
+              items: {
+                orderBy: { order: "asc" },
+                select: {
+                  quantityGrams: true,
+                  food: { select: { name: true, nameAr: true } },
+                },
               },
             },
           },
