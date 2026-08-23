@@ -1,5 +1,6 @@
 import {
   ActivityLevel,
+  CheckInStatus,
   ExperienceLevel,
   Goal,
   GymRole,
@@ -88,11 +89,37 @@ export async function saveOnboardingAnswer(params: {
       return false;
     }
 
-    await transaction.userProfile.upsert({
+    const profile = await transaction.userProfile.upsert({
       where: { userId: params.userId },
       update: params.profile,
       create: { userId: params.userId, ...params.profile },
     });
+
+    if (params.nextStep === OnboardingStep.COMPLETE && profile.weightKg !== null) {
+      const existingMeasurement = await transaction.bodyMeasurement.findFirst({
+        where: { userId: params.userId },
+        select: { id: true },
+      });
+      if (!existingMeasurement) {
+        const measurement = await transaction.bodyMeasurement.create({
+          data: {
+            userId: params.userId,
+            weightKg: profile.weightKg,
+            measuredAt: new Date(),
+            source: "ONBOARDING",
+          },
+        });
+        await transaction.auditLog.create({
+          data: {
+            actorUserId: params.userId,
+            action: "BODY_WEIGHT_LOGGED",
+            targetType: "BodyMeasurement",
+            targetId: measurement.id,
+            metadata: { source: "ONBOARDING" },
+          },
+        });
+      }
+    }
 
     return true;
   });
@@ -181,6 +208,22 @@ export async function getCoachContext(userId: string) {
             },
           },
         },
+      },
+      bodyMeasurements: {
+        orderBy: { measuredAt: "desc" },
+        take: 30,
+        select: { weightKg: true, waistCm: true, measuredAt: true },
+      },
+      weeklyCheckIns: {
+        where: { status: CheckInStatus.EVALUATED },
+        orderBy: { evaluatedAt: "desc" },
+        take: 1,
+        include: { evaluation: true },
+      },
+      agentDecisions: {
+        where: { decisionType: "WEEKLY_PROGRESS_REVIEW" },
+        orderBy: { createdAt: "desc" },
+        take: 1,
       },
     },
   });

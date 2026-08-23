@@ -28,7 +28,7 @@ export const PROTEIN_GRAMS_PER_KG: Readonly<Record<Goal, number>> = {
   [Goal.GENERAL_FITNESS]: 1.6,
 };
 
-const MIN_TARGET_TO_BMR_RATIO = 1.05;
+export const MIN_TARGET_TO_BMR_RATIO = 1.05;
 const FAT_GRAMS_PER_KG = 0.8;
 const MIN_FAT_CALORIE_RATIO = 0.2;
 const MAX_FAT_CALORIE_RATIO = 0.35;
@@ -45,6 +45,11 @@ export function calculateBmr(input: Pick<
   if (input.sex === Sex.FEMALE) return base - 161;
   // Neutral strategy: midpoint of the male and female Mifflin-St Jeor estimates.
   return ((base + 5) + (base - 161)) / 2;
+}
+
+export function minimumSafeCalorieTarget(bmr: number): number {
+  if (!Number.isFinite(bmr) || bmr <= 0) throw new RangeError("BMR must be positive and finite");
+  return Math.round(bmr * MIN_TARGET_TO_BMR_RATIO);
 }
 
 export function calculateNutritionTargets(
@@ -64,7 +69,7 @@ export function calculateNutritionTargets(
   const maintenanceCalories = Math.round(bmr * ACTIVITY_MULTIPLIERS[input.activityLevel]);
   const rawTarget = maintenanceCalories * GOAL_CALORIE_FACTORS[input.goal];
   // Product guardrail, not a medical threshold: never generate drastically below estimated BMR.
-  const targetCalories = Math.round(Math.max(rawTarget, bmr * MIN_TARGET_TO_BMR_RATIO));
+  const targetCalories = Math.round(Math.max(rawTarget, minimumSafeCalorieTarget(bmr)));
   let proteinGrams = input.weightKg * PROTEIN_GRAMS_PER_KG[input.goal];
   let fatGrams = Math.max(
     input.weightKg * FAT_GRAMS_PER_KG,

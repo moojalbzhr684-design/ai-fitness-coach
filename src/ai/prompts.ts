@@ -18,6 +18,11 @@ export function buildCoachInstructions(context: CoachContext): string {
   const program = context.workoutPrograms[0];
   const currentWorkout = context.workoutSessions[0];
   const nutritionPlan = context.nutritionPlans[0];
+  const latestCheckIn = context.weeklyCheckIns[0];
+  const latestEvaluation = latestCheckIn?.evaluation;
+  const latestMeasurement = context.bodyMeasurements[0];
+  const startingMeasurement = context.bodyMeasurements.at(-1);
+  const latestProgressDecision = context.agentDecisions[0];
 
   return [
     `أنت ${coachName}، مدرب لياقة وبناء أجسام ذكي.`,
@@ -29,6 +34,8 @@ export function buildCoachInstructions(context: CoachContext): string {
     "إذا يريد المستخدم بديل أكل، وجّهه إلى /alternatives حتى تُحترم الحساسية والقيود وتُحسب الكمية.",
     "هذه إرشادات لياقة عامة وليست تغذية علاجية. لا تشخّص أو تعالج حالة طبية، ولا تنصح بحمية قاسية أو تجويع أو تجفيف خطير.",
     "إذا ذكر حمل، حساسية شديدة، اضطراب أكل، أو حالة طبية تحتاج تخصيصاً سريرياً، انصحه بمراجعة طبيب أو اختصاصي تغذية مؤهل.",
+    "بيانات التقدم والقرار المخزن أدناه للقراءة فقط. اشرح summary وreasonCodes كما هي ولا تخترع سبباً جديداً.",
+    "إذا طلب المستخدم تغيير السعرات أو الخطة، وضّح أن التغييرات تمر عبر خدمة التقدم/الخطة ولم تُطبّق تلقائياً في هذه المرحلة.",
     "معلومات المستخدم:",
     `العمر: ${profile?.age ?? "غير محدد"}`,
     `الجنس: ${profile?.sex ?? "غير محدد"}`,
@@ -72,6 +79,24 @@ export function buildCoachInstructions(context: CoachContext): string {
           )).join(" | ")}`,
         ]
       : ["ما عنده نظام أكل نشط حالياً."]),
+    ...(latestCheckIn
+      ? [
+          "ملخص آخر متابعة:",
+          `وزن البداية المتوفر: ${startingMeasurement?.weightKg ?? profile?.weightKg ?? "غير محدد"}`,
+          `الوزن الحالي: ${latestMeasurement?.weightKg ?? latestCheckIn.weightKg ?? "غير محدد"}`,
+          `الالتزام: ${latestCheckIn.nutritionAdherencePct ?? "غير محدد"}%`,
+          `الخطوات: ${latestCheckIn.averageDailySteps ?? "غير محدد"}`,
+          `النوم: ${latestCheckIn.averageSleepHours ?? "غير محدد"}`,
+          `الجوع: ${latestCheckIn.hungerRating ?? "غير محدد"}/10`,
+          `الطاقة: ${latestCheckIn.energyRating ?? "غير محدد"}/10`,
+          `اتجاه الوزن كغم/أسبوع: ${latestEvaluation?.weightTrendKgPerWeek ?? "بيانات غير كافية"}`,
+          `اتجاه الوزن %/أسبوع: ${latestEvaluation?.weightTrendPercentPerWeek ?? "بيانات غير كافية"}`,
+          `القرار: ${latestEvaluation?.action ?? "غير محدد"}`,
+          `رموز السبب: ${compactJson(latestEvaluation?.reasonCodes)}`,
+          `الملخص المخزن: ${latestEvaluation?.summary ?? "غير محدد"}`,
+          `سجل AgentDecision: ${compactJson(latestProgressDecision?.newValue)}`,
+        ]
+      : ["ما عنده متابعة أسبوعية مقيمة حالياً."]),
     ...(gym
       ? [
           `القاعة: ${gym.name}`,

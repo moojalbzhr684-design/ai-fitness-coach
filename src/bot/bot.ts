@@ -12,6 +12,15 @@ import {
 } from "./onboarding.js";
 import { handleProfileCommand } from "./profile.js";
 import {
+  handleCheckInCallback,
+  handleCheckInCommand,
+  handleCheckInDraftText,
+  handleCheckInStatusCommand,
+  handleProgressCommand,
+  handleSkipCommand,
+  handleWeightCommand,
+} from "./checkin.js";
+import {
   handleAlternativesCommand,
   handleCreateNutritionCallback,
   handleFoodCommand,
@@ -63,6 +72,11 @@ export function createTelegramBot(): Bot {
   bot.command("food", handleFoodCommand);
   bot.command("macros", handleMacrosCommand);
   bot.command("alternatives", async (ctx) => handleAlternativesCommand(ctx, ctx.match));
+  bot.command("checkin", handleCheckInCommand);
+  bot.command("checkinstatus", handleCheckInStatusCommand);
+  bot.command("progress", handleProgressCommand);
+  bot.command("weight", async (ctx) => handleWeightCommand(ctx, ctx.match));
+  bot.command("skip", handleSkipCommand);
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
@@ -77,6 +91,10 @@ export function createTelegramBot(): Bot {
         "/food - عرض أو إنشاء نظام الأكل",
         "/macros - عرض أهداف السعرات والماكروز",
         "/alternatives - بدائل الأكل بالكميات المناسبة",
+        "/checkin - المتابعة الأسبوعية",
+        "/checkinstatus - حالة آخر متابعة",
+        "/progress - ملخص تقدمك",
+        "/weight - تسجيل وزن سريع",
         "/help - المساعدة",
         "",
         "بعد ما تكمل الإعداد، تكدر تسألني أسئلة عامة عن الرياضة واللياقة.",
@@ -89,6 +107,7 @@ export function createTelegramBot(): Bot {
   bot.callbackQuery(/^workout:day:/, handleWorkoutDayCallback);
   bot.callbackQuery(/^workout:start:/, handleStartWorkoutCallback);
   bot.callbackQuery("nutrition:create", handleCreateNutritionCallback);
+  bot.callbackQuery(/^checkin:/, handleCheckInCallback);
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();
@@ -107,6 +126,8 @@ export function createTelegramBot(): Bot {
       await handleOnboardingText(ctx, user, text);
       return;
     }
+
+    if (await handleCheckInDraftText(ctx, user.id, text)) return;
 
     try {
       await ctx.replyWithChatAction("typing");

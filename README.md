@@ -1,15 +1,16 @@
-# AI Fitness Coach — Milestone 3
+# AI Fitness Coach — Milestone 4
 
-Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 3 adds deterministic calorie/macro targets, structured meal plans, an Iraqi/Middle Eastern food catalogue, nutrition-aware substitutions, allergy/restriction filtering, and budget estimates for beginner and intermediate users. Body/photo analysis, automatic check-in adjustments, meal-photo recognition, barcode scanning, and dashboards remain out of scope.
+Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 4 adds persistent weekly check-ins, immutable body-measurement history, linear-regression weight trends, deterministic progress decisions, recovery/adherence guardrails, AgentDecision/audit records, and read-only AI progress context. Recommendations are never applied automatically. Photo analysis, dashboards, trainer approval UI, device integrations, and payments remain out of scope.
 
 ## Architecture
 
 ```text
 Telegram Bot ───────┐    ┌─> Workout services ─> Workout engine ───────┐
 Future Mobile App ──┼─> ─┤                                        PostgreSQL
-Future Dashboards ──┘    └─> Nutrition services ─> Nutrition engine ───┘
-                                                   │
-                                                   └─> global food data
+Future Dashboards ──┘    ├─> Nutrition services ─> Nutrition engine ───┤
+                         └─> Check-in services ─> Progress/decision ────┘
+                                                    │
+                                                    └─> read-only plan context
 ```
 
 Telegram handlers only translate Telegram updates into calls to reusable services. Program selection, prescription validation, ownership checks, session state, and progression live outside the bot, so future mobile, Trainer Dashboard, and Master Admin Dashboard interfaces can use the same behavior and data model.
@@ -191,6 +192,30 @@ Budget estimates use `quantityGrams / 1000 × estimatedPriceIqdPerKg`. Missing p
 
 This is a general fitness nutrition feature, not clinical medical nutrition. It does not diagnose or treat disease, manage pregnancy, treat eating disorders, or replace individualized advice from a qualified clinician/dietitian for severe allergies or medical conditions.
 
+## Weekly check-ins and progress decisions
+
+Check-in drafts are stored in `WeeklyCheckIn` with an explicit `currentStep`, so `/checkin` resumes after process restarts. The flow collects weight, optional waist, nutrition adherence, reported workouts, optional steps, sleep, hunger, energy, and optional notes. Completed workout sessions are counted separately in `trackedWorkoutsCompleted`; they never overwrite the user's reported number.
+
+Completion is transactional: the draft becomes submitted, a `BodyMeasurement` is appended, profile weight is refreshed, trend/evaluation records are created, an `AgentDecision` is written, audit events are recorded, and the check-in becomes evaluated. No historical measurement or plan is deleted. New onboarding completions create an `ONBOARDING` measurement only when the user has no measurement; migrations/seeds do not invent history for existing users.
+
+### Trend and decision engine
+
+The pure trend engine reads approximately the latest 21 days and requires at least a 14-day span. It fits ordinary least-squares linear regression against actual measurement dates, so irregular dates are handled correctly. The slope is reported as kg/week and as percent of current body weight per week. One isolated measurement returns `COLLECT_MORE_DATA`.
+
+Goal ranges, the 85% adherence gate, recovery thresholds, calorie deltas, step increments, and step ceiling are centralized in `src/progress/rules.ts`. Slow fat loss with poor adherence recommends a supportive adherence review rather than lower calories. High hunger, very low energy, or very low sleep blocks aggressive reductions. Calorie reductions reuse Milestone 3's BMR-based safety floor. The engine generally recommends one primary lever—calories or steps—not both.
+
+All decisions store stable action enums, concise summaries, reason codes, and structured old/new values. Calorie/activity recommendations require coach approval for gym-linked users. Standalone users still receive stored recommendations, but neither case mutates `NutritionTarget`, `NutritionPlan`, `WorkoutProgram`, or workout prescriptions. Trainer approval and automatic application are future work.
+
+### Telegram progress commands
+
+- `/checkin` — start or resume the persistent weekly check-in
+- `/checkinstatus` — show a draft or the latest evaluated recommendation
+- `/progress` — show starting/current weight, total change, trend, waist, adherence, workouts, and latest decision
+- `/weight <kg>` — append a manual measurement and refresh profile weight without creating a check-in
+- `/skip` — skip only optional waist, steps, or notes while a check-in is open
+
+V1 prevents accidental duplicate check-ins by declining a new draft when an evaluated check-in is less than five days old. This is a product cadence guard, not a medical rule.
+
 ## Testing the Telegram flow
 
 1. Start the app and open the bot in Telegram.
@@ -202,7 +227,9 @@ This is a general fitness nutrition feature, not clinical medical nutrition. It 
 7. Send `/workout`, create the program, open a day, and press **ابدأ التمرين**.
 8. Log sets, for example `/logset 1 1 60 10 2`, inspect `/currentworkout`, then use `/finishworkout`.
 9. Send `/food`, create the plan, inspect `/macros`, then request an item alternative such as `/alternatives 2 1`.
-10. Temporarily use an invalid OpenAI key to verify a safe Telegram error and an `AIEvent` with status `ERROR`.
+10. Send `/checkin`, complete each persisted step, inspect `/checkinstatus` and `/progress`, and confirm recommendations say they were not applied.
+11. Use `/weight 78.2` and confirm it adds weight history without creating a check-in.
+12. Temporarily use an invalid OpenAI key to verify a safe Telegram error and an `AIEvent` with status `ERROR`.
 
 The `/join` command can never assign `OWNER` or `TRAINER`. Those roles require a future administrative flow. A Telegram user can only become `SUPER_ADMIN` when their ID matches the server-controlled `SUPER_ADMIN_TELEGRAM_ID`.
 
@@ -218,7 +245,8 @@ src/
   ai/                      # prompts and Responses API orchestration
   workout/                 # pure generation, templates, validation, progression
   nutrition/               # pure targets, plans, budget, substitutions, validation
-  services/                # reusable workout, nutrition, user, gym, AI-event logic
+  progress/                # pure trends, rules, evaluation, check-in validation
+  services/                # reusable workout, nutrition, progress, user, gym logic
   utils/                   # safe text helpers
 prisma/
   schema.prisma            # multi-tenant data model
@@ -240,5 +268,7 @@ prisma.config.ts           # Prisma 7 CLI configuration
 - Progression reasons are concise user-facing results, not hidden reasoning.
 - Allergies are hard exclusions in meal generation and food substitution services.
 - Meal items store nutrition snapshots so historical plans do not change with later food-data edits.
+- Check-in completion writes deterministic `ProgressEvaluation`, `AgentDecision`, and concise `AuditLog` records.
+- Progress AI context is read-only and uses stored summaries/reason codes rather than invented rationales.
 - Unexpected Telegram update errors are contained so one update does not terminate the process.
 - `SIGINT` and `SIGTERM` stop the bot, API server, and Prisma connection cleanly.
