@@ -7,6 +7,7 @@ import {
   MembershipStatus,
   NutritionPlanStatus,
   OnboardingStep,
+  PhotoAnalysisStatus,
   Sex,
   SystemRole,
   TrainingPlace,
@@ -224,6 +225,20 @@ export async function getCoachContext(userId: string) {
         where: { decisionType: "WEEKLY_PROGRESS_REVIEW" },
         orderBy: { createdAt: "desc" },
         take: 1,
+      },
+      progressPhotoSets: {
+        where: {
+          completedAt: { not: null },
+          analysis: { status: PhotoAnalysisStatus.COMPLETED },
+        },
+        orderBy: { capturedAt: "desc" },
+        take: 1,
+        select: {
+          capturedAt: true,
+          analysis: {
+            select: { overallSummary: true, comparisonSummary: true },
+          },
+        },
       },
     },
   });

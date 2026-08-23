@@ -35,6 +35,16 @@ import {
   handleWorkoutCommand,
   handleWorkoutDayCallback,
 } from "./workout.js";
+import {
+  handleDeletePhotosCallback,
+  handleDeletePhotosCommand,
+  handleLatestPhotosCommand,
+  handlePhotoConsentCallback,
+  handlePhotoProgressCommand,
+  handlePhotosCommand,
+  handleProgressPhotoMessage,
+  handleUnsupportedPhotoDocument,
+} from "./photos.js";
 
 export function createTelegramBot(): Bot {
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
@@ -77,6 +87,10 @@ export function createTelegramBot(): Bot {
   bot.command("progress", handleProgressCommand);
   bot.command("weight", async (ctx) => handleWeightCommand(ctx, ctx.match));
   bot.command("skip", handleSkipCommand);
+  bot.command("photos", handlePhotosCommand);
+  bot.command("latestphotos", handleLatestPhotosCommand);
+  bot.command("photoprogress", handlePhotoProgressCommand);
+  bot.command("deletephotos", handleDeletePhotosCommand);
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
@@ -95,6 +109,10 @@ export function createTelegramBot(): Bot {
         "/checkinstatus - حالة آخر متابعة",
         "/progress - ملخص تقدمك",
         "/weight - تسجيل وزن سريع",
+        "/photos - رفع صور تقدم خاصة",
+        "/latestphotos - معلومات آخر مجموعة صور",
+        "/photoprogress - ملخص تقدم الصور",
+        "/deletephotos - حذف آخر مجموعة بعد التأكيد",
         "/help - المساعدة",
         "",
         "بعد ما تكمل الإعداد، تكدر تسألني أسئلة عامة عن الرياضة واللياقة.",
@@ -108,6 +126,11 @@ export function createTelegramBot(): Bot {
   bot.callbackQuery(/^workout:start:/, handleStartWorkoutCallback);
   bot.callbackQuery("nutrition:create", handleCreateNutritionCallback);
   bot.callbackQuery(/^checkin:/, handleCheckInCallback);
+  bot.callbackQuery(/^photos:consent:/, handlePhotoConsentCallback);
+  bot.callbackQuery(/^photos:delete:/, handleDeletePhotosCallback);
+
+  bot.on("message:photo", handleProgressPhotoMessage);
+  bot.on("message:document", handleUnsupportedPhotoDocument);
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text.trim();

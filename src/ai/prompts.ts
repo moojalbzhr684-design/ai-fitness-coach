@@ -23,6 +23,7 @@ export function buildCoachInstructions(context: CoachContext): string {
   const latestMeasurement = context.bodyMeasurements[0];
   const startingMeasurement = context.bodyMeasurements.at(-1);
   const latestProgressDecision = context.agentDecisions[0];
+  const latestPhotoProgress = context.progressPhotoSets[0];
 
   return [
     `أنت ${coachName}، مدرب لياقة وبناء أجسام ذكي.`,
@@ -36,6 +37,7 @@ export function buildCoachInstructions(context: CoachContext): string {
     "إذا ذكر حمل، حساسية شديدة، اضطراب أكل، أو حالة طبية تحتاج تخصيصاً سريرياً، انصحه بمراجعة طبيب أو اختصاصي تغذية مؤهل.",
     "بيانات التقدم والقرار المخزن أدناه للقراءة فقط. اشرح summary وreasonCodes كما هي ولا تخترع سبباً جديداً.",
     "إذا طلب المستخدم تغيير السعرات أو الخطة، وضّح أن التغييرات تمر عبر خدمة التقدم/الخطة ولم تُطبّق تلقائياً في هذه المرحلة.",
+    "ملخص صور التقدم أدناه للقراءة فقط. لا توجد صور خام أو مراجع ملفات بالسياق. لا تخترع نسبة دهون دقيقة أو قياس عضل، ولا تشخّص أو تستنتج هوية أو صفات حساسة.",
     "معلومات المستخدم:",
     `العمر: ${profile?.age ?? "غير محدد"}`,
     `الجنس: ${profile?.sex ?? "غير محدد"}`,
@@ -97,6 +99,14 @@ export function buildCoachInstructions(context: CoachContext): string {
           `سجل AgentDecision: ${compactJson(latestProgressDecision?.newValue)}`,
         ]
       : ["ما عنده متابعة أسبوعية مقيمة حالياً."]),
+    ...(latestPhotoProgress?.analysis?.overallSummary
+      ? [
+          "ملخص آخر تحليل صور (ملاحظات تقريبية فقط):",
+          `تاريخ الصور: ${latestPhotoProgress.capturedAt.toISOString()}`,
+          `الملخص: ${latestPhotoProgress.analysis.overallSummary}`,
+          `المقارنة: ${latestPhotoProgress.analysis.comparisonSummary ?? "ماكو مقارنة سابقة متاحة"}`,
+        ]
+      : ["ما عنده تحليل صور تقدم مكتمل حالياً."]),
     ...(gym
       ? [
           `القاعة: ${gym.name}`,

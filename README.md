@@ -1,6 +1,6 @@
-# AI Fitness Coach — Milestone 4
+# AI Fitness Coach — Milestone 5
 
-Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 4 adds persistent weekly check-ins, immutable body-measurement history, linear-regression weight trends, deterministic progress decisions, recovery/adherence guardrails, AgentDecision/audit records, and read-only AI progress context. Recommendations are never applied automatically. Photo analysis, dashboards, trainer approval UI, device integrations, and payments remain out of scope.
+Production-oriented foundation for a multi-tenant AI fitness platform. Milestone 5 adds private progress-photo checkpoints, restart-safe Telegram intake, explicit analysis/access consent, replaceable media storage, structured vision observations and comparisons, safe deletion, and audit/AIEvent records. Recommendations are never applied automatically. Dashboards, trainer approval UI, device integrations, public galleries, mobile apps, and payments remain out of scope.
 
 ## Architecture
 
@@ -8,9 +8,10 @@ Production-oriented foundation for a multi-tenant AI fitness platform. Milestone
 Telegram Bot ───────┐    ┌─> Workout services ─> Workout engine ───────┐
 Future Mobile App ──┼─> ─┤                                        PostgreSQL
 Future Dashboards ──┘    ├─> Nutrition services ─> Nutrition engine ───┤
-                         └─> Check-in services ─> Progress/decision ────┘
+                         ├─> Check-in services ─> Progress/decision ───┤
+                         └─> Photo services ─> Media/Vision boundary ──┘
                                                     │
-                                                    └─> read-only plan context
+                                                    └─> read-only summary context
 ```
 
 Telegram handlers only translate Telegram updates into calls to reusable services. Program selection, prescription validation, ownership checks, session state, and progression live outside the bot, so future mobile, Trainer Dashboard, and Master Admin Dashboard interfaces can use the same behavior and data model.
@@ -216,6 +217,25 @@ All decisions store stable action enums, concise summaries, reason codes, and st
 
 V1 prevents accidental duplicate check-ins by declining a new draft when an evaluated check-in is less than five days old. This is a product cadence guard, not a medical rule.
 
+## Progress photos and vision analysis
+
+`ProgressPhotoSet` represents a dated checkpoint and permits partial sets, while the normal Telegram flow collects `FRONT`, `SIDE`, and `BACK` views. `ProgressPhoto` links each view to one private `Media` record and enforces one photo per view per set. Upload progress is inferred from persisted rows, so `/photos` resumes after an application restart without an in-memory session.
+
+`src/media/` defines the replaceable `MediaStorage` boundary. V1 retains private Telegram file IDs and downloads a size-limited image only when an authorized analysis needs a readable in-memory data URL. No permanent public media URL is created. Future S3, Cloudflare R2, or Supabase adapters can implement the same interface without changing the photo services.
+
+Vision analysis is opt-in. `allowVisionAnalysis`, `allowTrainerPhotoAccess`, and `allowGymPhotoAccess` all default to `false`, and each photo defaults to `PRIVATE`. Analysis consent does not grant trainer or gym access. Trainer access additionally requires an active same-gym membership, user consent, and compatible photo visibility; gym-owner access requires separate gym consent and `GYM_ALLOWED`. Privileged access paths are audited.
+
+The vision prompt and output validator permit only cautious, visible fitness observations such as apparent muscular development, symmetry, posture-related differences, broad leanness changes, and photo consistency. They prohibit exact body-fat percentages, exact muscle-mass claims, medical diagnosis, identity matching, sensitive-trait inference, sexualized commentary, and appearance shaming. Responses API calls use strict structured output with remote response storage disabled. Only concise user-facing observations are persisted; raw image bytes and hidden reasoning are never written to `AIEvent`, analysis, chat context, or audit logs.
+
+When an earlier completed analysis exists, the current vision request can compare the private image sets and store a cautious `comparisonSummary`. Missing or inconsistent photos are handled with explicit caveats. The normal AI coach can read only the latest photo date, overall summary, and comparison summary—not media references or images.
+
+### Telegram photo commands
+
+- `/photos` — start or resume a private photo set and choose analysis consent
+- `/latestphotos` — show latest set metadata, present views, status, and concise summary without resending images
+- `/photoprogress` — show completed-set count, latest analysis, and previous-set comparison
+- `/deletephotos` — request confirmation before deleting the latest set, its analysis, and its exclusively linked media
+
 ## Testing the Telegram flow
 
 1. Start the app and open the bot in Telegram.
@@ -230,6 +250,9 @@ V1 prevents accidental duplicate check-ins by declining a new draft when an eval
 10. Send `/checkin`, complete each persisted step, inspect `/checkinstatus` and `/progress`, and confirm recommendations say they were not applied.
 11. Use `/weight 78.2` and confirm it adds weight history without creating a check-in.
 12. Temporarily use an invalid OpenAI key to verify a safe Telegram error and an `AIEvent` with status `ERROR`.
+13. Use `/photos`, choose analysis consent or storage-only mode, upload FRONT/SIDE/BACK as Telegram photos, then inspect `/latestphotos` and `/photoprogress`.
+14. Restart during a partial photo set and use `/photos` to confirm the next missing view resumes from PostgreSQL.
+15. Use `/deletephotos`, cancel once, then confirm and verify only the latest set and its linked media are removed with an audit record.
 
 The `/join` command can never assign `OWNER` or `TRAINER`. Those roles require a future administrative flow. A Telegram user can only become `SUPER_ADMIN` when their ID matches the server-controlled `SUPER_ADMIN_TELEGRAM_ID`.
 
@@ -246,6 +269,8 @@ src/
   workout/                 # pure generation, templates, validation, progression
   nutrition/               # pure targets, plans, budget, substitutions, validation
   progress/                # pure trends, rules, evaluation, check-in validation
+  media/                   # private, replaceable media storage contracts/adapters
+  vision/                  # safe structured analysis prompts, types, and comparison
   services/                # reusable workout, nutrition, progress, user, gym logic
   utils/                   # safe text helpers
 prisma/
@@ -261,7 +286,7 @@ prisma.config.ts           # Prisma 7 CLI configuration
 
 - Secrets are loaded from ignored environment files and are redacted from handled errors.
 - AI events contain concise input/output summaries, token counts when available, latency, and errors—not hidden chain-of-thought.
-- `Media` stores metadata only; Milestone 1 does not download or analyze uploads.
+- `Media` stores private metadata and backend references; no public gallery or permanent unauthenticated URL exists.
 - `AgentDecision` stores explicit operational decisions and reasons, not private reasoning.
 - `AuditLog` is ready for user, gym, trainer, and future admin activity.
 - Workout service ownership checks prevent a user from viewing or logging another user's workout.
@@ -270,5 +295,7 @@ prisma.config.ts           # Prisma 7 CLI configuration
 - Meal items store nutrition snapshots so historical plans do not change with later food-data edits.
 - Check-in completion writes deterministic `ProgressEvaluation`, `AgentDecision`, and concise `AuditLog` records.
 - Progress AI context is read-only and uses stored summaries/reason codes rather than invented rationales.
+- Photo analysis requires explicit consent, private visibility is the default, and trainer/gym access requires separate consent plus same-gym permission checks.
+- Vision `AIEvent` and audit records contain concise metadata only—never image bytes, Telegram file references, public URLs, or hidden chain-of-thought.
 - Unexpected Telegram update errors are contained so one update does not terminate the process.
 - `SIGINT` and `SIGTERM` stop the bot, API server, and Prisma connection cleanly.

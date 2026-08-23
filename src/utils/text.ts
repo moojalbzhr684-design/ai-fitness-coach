@@ -23,7 +23,9 @@ export function truncateText(value: string, maxLength = 500): string {
 
 export function safeErrorMessage(error: unknown, secrets: string[] = []): string {
   const raw = error instanceof Error ? error.message : "Unknown error";
-  let safe = raw.replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]");
+  let safe = raw
+    .replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/g, "[REDACTED_IMAGE]")
+    .replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]");
 
   for (const secret of secrets) {
     if (secret) {
