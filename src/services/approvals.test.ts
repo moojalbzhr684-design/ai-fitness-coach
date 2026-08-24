@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
     prepareNutritionPlanVersion: vi.fn(),
     createPreparedNutritionPlanVersion: vi.fn(),
     prisma: {
-      approvalRequest: { findUnique: vi.fn(), findMany: vi.fn() },
+      approvalRequest: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
       agentDecision: { findUnique: vi.fn() },
       gymSettings: { findUnique: vi.fn() },
       trainerAssignment: { findFirst: vi.fn() },
@@ -40,6 +40,7 @@ import {
   approveRequest,
   createApprovalForAgentDecision,
   rejectRequest,
+  requestStructuredPlanReview,
 } from "./approvals.js";
 
 const future = new Date(Date.now() + 86_400_000);
@@ -191,5 +192,33 @@ describe("approval application", () => {
     expect(mocks.tx.auditLog.createMany).toHaveBeenCalledWith({
       data: expect.arrayContaining([expect.objectContaining({ action: "NUTRITION_ADJUSTMENT_REJECTED" })]),
     });
+  });
+});
+
+describe("member structured plan review", () => {
+  it("routes a member request to the correctly assigned trainer without applying a plan change", async () => {
+    mocks.getActiveGymMembership.mockResolvedValue({ role: GymRole.MEMBER });
+    mocks.prisma.approvalRequest.findFirst.mockResolvedValue(null);
+    mocks.prisma.trainerAssignment.findFirst.mockResolvedValue({ trainerUserId: "trainer-a" });
+    mocks.tx.approvalRequest.create.mockImplementation(async ({ data }) => ({ id: "review-a", ...data }));
+    const result = await requestStructuredPlanReview({ memberUserId: "member-a", gymId: "gym-a", scope: "BOTH", notes: "راجع النظام" });
+    expect(result).toMatchObject({ trainerUserId: "trainer-a", type: ApprovalType.OTHER });
+    expect(mocks.tx.approvalRequest.create).toHaveBeenCalledWith({ data: expect.objectContaining({ memberUserId: "member-a", gymId: "gym-a", requestedChange: { kind: "PLAN_REVIEW_REQUEST", scope: "BOTH", notes: "راجع النظام" } }) });
+    expect(mocks.createPreparedNutritionPlanVersion).not.toHaveBeenCalled();
+    expect(mocks.tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ actorUserId: "member-a", action: "PLAN_REVIEW_REQUESTED" }) });
+  });
+
+  it("returns an existing pending review to make retries idempotent", async () => {
+    mocks.getActiveGymMembership.mockResolvedValue({ role: GymRole.MEMBER });
+    mocks.prisma.approvalRequest.findFirst.mockResolvedValue({ id: "existing-review" });
+    await expect(requestStructuredPlanReview({ memberUserId: "member-a", gymId: "gym-a", scope: "NUTRITION" })).resolves.toEqual({ id: "existing-review" });
+    expect(mocks.tx.approvalRequest.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks cross-gym or non-member review creation", async () => {
+    mocks.getActiveGymMembership.mockResolvedValue(null);
+    await expect(requestStructuredPlanReview({ memberUserId: "member-a", gymId: "gym-b", scope: "WORKOUT" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.prisma.trainerAssignment.findFirst).not.toHaveBeenCalled();
+    expect(mocks.tx.approvalRequest.create).not.toHaveBeenCalled();
   });
 });

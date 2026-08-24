@@ -56,6 +56,43 @@ export async function listActiveFoods() {
   return foods.map(toFoodData);
 }
 
+export async function findFoodsByReference(reference: string) {
+  const normalized = reference.trim();
+  if (!normalized || normalized.length > 100) return [];
+  return prisma.food.findMany({
+    where: {
+      isActive: true,
+      OR: [
+        { name: { contains: normalized, mode: "insensitive" } },
+        { nameAr: { contains: normalized, mode: "insensitive" } },
+        { slug: { contains: normalized.toLowerCase().replace(/\s+/g, "-") } },
+      ],
+    },
+    orderBy: [{ isIraqiCommon: "desc" }, { name: "asc" }],
+    take: 8,
+  });
+}
+
+export async function getFoodMacrosByReference(reference: string, quantityGrams: number) {
+  if (!Number.isFinite(quantityGrams) || quantityGrams <= 0 || quantityGrams > 2_000) return null;
+  const foods = await findFoodsByReference(reference);
+  if (foods.length !== 1) return { match: null, options: foods.map((food) => ({ name: food.name, nameAr: food.nameAr })) };
+  const food = foods[0]!;
+  const factor = quantityGrams / 100;
+  return {
+    match: {
+      name: food.name,
+      nameAr: food.nameAr,
+      quantityGrams,
+      calories: food.caloriesPer100g * factor,
+      proteinGrams: food.proteinPer100g * factor,
+      carbsGrams: food.carbsPer100g * factor,
+      fatGrams: food.fatPer100g * factor,
+    },
+    options: [],
+  };
+}
+
 export async function getFoodSubstitutions(
   foodId: string,
   originalQuantityGrams: number,

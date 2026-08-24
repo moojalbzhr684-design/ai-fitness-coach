@@ -38,6 +38,33 @@ export async function getCurrentWorkoutSession(userId: string) {
   });
 }
 
+export async function getRecentWorkoutHistory(userId: string, limit = 5) {
+  const take = Math.min(5, Math.max(1, Math.trunc(limit)));
+  return prisma.workoutSession.findMany({
+    where: { userId, status: WorkoutSessionStatus.COMPLETED },
+    orderBy: { completedAt: "desc" },
+    take,
+    select: {
+      id: true,
+      completedAt: true,
+      durationMinutes: true,
+      workoutDay: { select: { dayNumber: true, name: true } },
+      exerciseLogs: {
+        orderBy: { order: "asc" },
+        select: {
+          order: true,
+          exercise: { select: { id: true, name: true } },
+          setLogs: {
+            where: { isWarmup: false },
+            orderBy: { setNumber: "asc" },
+            select: { setNumber: true, weightKg: true, reps: true, rir: true },
+          },
+        },
+      },
+    },
+  });
+}
+
 export async function startWorkoutSession(userId: string, workoutDayId: string) {
   return prisma.$transaction(async (tx) => {
     const transaction = tx as unknown as typeof prisma;

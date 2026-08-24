@@ -166,6 +166,76 @@ export async function getPendingApprovalsForTrainer(actorUserId: string, gymId: 
   });
 }
 
+export async function getPendingApprovalsForMember(memberUserId: string, gymId?: string) {
+  return prisma.approvalRequest.findMany({
+    where: {
+      memberUserId,
+      status: ApprovalStatus.PENDING,
+      expiresAt: { gt: new Date() },
+      ...(gymId ? { gymId } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: { id: true, reference: true, gymId: true, type: true, status: true, reason: true, createdAt: true, expiresAt: true },
+  });
+}
+
+export async function requestStructuredPlanReview(input: {
+  memberUserId: string;
+  gymId: string;
+  scope: "NUTRITION" | "WORKOUT" | "BOTH";
+  notes?: string;
+}) {
+  const notes = input.notes?.trim();
+  if (notes && notes.length > 500) throw new ApprovalServiceError("INVALID_CHANGE", "Review notes are too long");
+  const membership = await getActiveGymMembership(input.memberUserId, input.gymId);
+  if (membership?.role !== GymRole.MEMBER) {
+    throw new ApprovalServiceError("FORBIDDEN", "Member is not active in this gym");
+  }
+  const reason = `MEMBER_PLAN_REVIEW:${input.scope}:${notes ?? "NO_NOTES"}`;
+  const existing = await prisma.approvalRequest.findFirst({
+    where: {
+      memberUserId: input.memberUserId,
+      gymId: input.gymId,
+      type: ApprovalType.OTHER,
+      status: ApprovalStatus.PENDING,
+      reason,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (existing) return existing;
+  const trainer = await prisma.trainerAssignment.findFirst({
+    where: { memberUserId: input.memberUserId, gymId: input.gymId, isPrimary: true },
+    orderBy: { createdAt: "asc" },
+  });
+  return prisma.$transaction(async (tx) => {
+    const transaction = tx as unknown as typeof prisma;
+    const request = await transaction.approvalRequest.create({
+      data: {
+        reference: randomBytes(12).toString("hex"),
+        gymId: input.gymId,
+        memberUserId: input.memberUserId,
+        trainerUserId: trainer?.trainerUserId ?? null,
+        type: ApprovalType.OTHER,
+        requestedChange: { kind: "PLAN_REVIEW_REQUEST", scope: input.scope, notes: notes ?? null },
+        reason,
+        expiresAt: new Date(Date.now() + APPROVAL_EXPIRATION_DAYS * DAY_MS),
+      },
+    });
+    await transaction.auditLog.create({
+      data: {
+        actorUserId: input.memberUserId,
+        gymId: input.gymId,
+        action: "PLAN_REVIEW_REQUESTED",
+        targetType: "ApprovalRequest",
+        targetId: request.id,
+        metadata: { scope: input.scope, assigned: Boolean(trainer) },
+      },
+    });
+    return request;
+  });
+}
+
 async function expireIfNeeded(actorUserId: string, requestId: string): Promise<boolean> {
   const request = await prisma.approvalRequest.findUnique({ where: { id: requestId } });
   if (!request || request.status !== ApprovalStatus.PENDING || !request.expiresAt || request.expiresAt > new Date()) return false;

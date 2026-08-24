@@ -143,6 +143,36 @@ export async function getUserProfile(telegramId: bigint) {
   });
 }
 
+export async function getUserProfileById(userId: string) {
+  return prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      firstName: true,
+      lastName: true,
+      profile: {
+        select: {
+          age: true,
+          sex: true,
+          heightCm: true,
+          weightKg: true,
+          activityLevel: true,
+          experienceLevel: true,
+          goal: true,
+          trainingDaysPerWeek: true,
+          sessionMinutes: true,
+          trainingPlace: true,
+          mealsPerDay: true,
+          weeklyFoodBudgetIqd: true,
+          foodPreferences: true,
+          dislikedFoods: true,
+          allergies: true,
+          dietaryRestrictions: true,
+        },
+      },
+    },
+  });
+}
+
 export async function getCoachContext(userId: string, gymId?: string) {
   return prisma.user.findUnique({
     where: { id: userId },

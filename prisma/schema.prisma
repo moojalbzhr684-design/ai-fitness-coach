@@ -107,8 +107,26 @@ enum MediaVisibility {
 }
 
 enum AIEventStatus {
+  PROCESSING
   SUCCESS
   ERROR
+}
+
+enum AgentMemoryCategory {
+  FOOD_PREFERENCE
+  FOOD_DISLIKE
+  TRAINING_PREFERENCE
+  SCHEDULE_PREFERENCE
+  EXERCISE_PREFERENCE
+  COACHING_PREFERENCE
+  USER_STATED_CONSTRAINT
+}
+
+enum AIToolExecutionStatus {
+  SUCCESS
+  ERROR
+  TIMEOUT
+  REJECTED
 }
 
 enum MuscleGroup {
@@ -280,6 +298,8 @@ model User {
   gymMemberships      GymMembership[]
   media               Media[]
   aiEvents            AIEvent[]
+  agentMemories       AgentMemory[]
+  aiToolExecutions    AIToolExecution[]
   agentDecisions      AgentDecision[]
   auditLogs           AuditLog[]              @relation("AuditActor")
   workoutPrograms     WorkoutProgram[]
@@ -350,6 +370,8 @@ model Gym {
   memberships          GymMembership[]
   media                Media[]
   aiEvents             AIEvent[]
+  agentMemories        AgentMemory[]
+  aiToolExecutions     AIToolExecution[]
   agentDecisions       AgentDecision[]
   auditLogs            AuditLog[]
   workoutPrograms      WorkoutProgram[]
@@ -497,13 +519,59 @@ model AIEvent {
   errorMessage     String?
   createdAt        DateTime      @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  gym  Gym? @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym            Gym?              @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  toolExecutions AIToolExecution[]
 
   @@index([userId, createdAt])
   @@index([gymId, createdAt])
   @@index([status, createdAt])
   @@index([eventType, createdAt])
+}
+
+model AgentMemory {
+  id              String              @id @default(cuid())
+  userId          String
+  gymId           String?
+  category        AgentMemoryCategory
+  key             String
+  value           Json
+  source          String?
+  confidence      Float?
+  isActive        Boolean             @default(true)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  lastConfirmedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym  Gym? @relation(fields: [gymId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, category, key])
+  @@index([userId, isActive, updatedAt])
+  @@index([gymId, isActive])
+}
+
+model AIToolExecution {
+  id            String                @id @default(cuid())
+  aiEventId     String?
+  userId        String
+  gymId         String?
+  toolName      String
+  status        AIToolExecutionStatus
+  durationMs    Int?
+  inputSummary  String?
+  outputSummary String?
+  errorMessage  String?
+  createdAt     DateTime              @default(now())
+
+  aiEvent AIEvent? @relation(fields: [aiEventId], references: [id], onDelete: SetNull)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym     Gym?     @relation(fields: [gymId], references: [id], onDelete: SetNull)
+
+  @@index([aiEventId, createdAt])
+  @@index([userId, createdAt])
+  @@index([gymId, createdAt])
+  @@index([toolName, status, createdAt])
 }
 
 model AgentDecision {

@@ -1,6 +1,6 @@
-# AI Fitness Coach — Milestone 7
+# AI Fitness Coach — Milestone 8
 
-Production-oriented multi-tenant AI fitness platform with Telegram coaching and role-scoped web dashboards. Milestone 7 adds a Next.js master-admin, gym-owner, and trainer interface over the existing shared services. Payments, device integrations, public galleries, mobile apps, and per-gym bot tokens remain out of scope.
+Production-oriented multi-tenant AI fitness platform with Telegram coaching and role-scoped web dashboards. Milestone 8 turns normal conversation into an allow-listed AI Agent that reads real platform data and invokes narrow authorized services. Payments, device integrations, public galleries, mobile apps, browsing, voice, WhatsApp, and per-gym bot tokens remain out of scope.
 
 ## Architecture
 
@@ -11,8 +11,10 @@ Central AI Platform / SUPER_ADMIN
                  └─ Gym B ─ Owner ─ Trainers ─ Members
                                  │
 Telegram Bot ─┐
-              ├─> auth + tenant scope ─> reusable services ─> PostgreSQL
-Next.js Web ──┘                           ├─ Workout / equipment rules
+              ├─> Agent Orchestrator ─> Explicit Tool Registry ─┐
+Future Apps ──┘                                                │
+Next.js Web ─────> auth + tenant scope ────────────────────────┼─> reusable services ─> PostgreSQL
+                                                             │   ├─ Workout / equipment rules
                                          ├─ Nutrition / versioned plans
                                          ├─ Progress / approval workflow
                                          └─ Private media / vision boundary
@@ -20,9 +22,39 @@ Next.js Web ──┘                           ├─ Workout / equipment rules
 
 Telegram handlers and Next.js server actions are thin interfaces over the same reusable services. Program selection, prescription validation, ownership checks, approval application, session state, and progression remain outside both interfaces. The dashboard does not contain a second implementation of business rules.
 
-Workout and nutrition plans are durable database entities rather than free-form AI text. Creating a replacement archives the user's old active plan and atomically creates the structured replacement while preserving history. The chat AI receives concise, read-only workout/nutrition summaries and cannot write plan tables.
+Workout and nutrition plans are durable database entities rather than free-form AI text. Creating a replacement archives the user's old active plan and atomically creates the structured replacement while preserving history. The Agent receives concise context and can act only through the explicit registry; the LLM never writes Prisma tables, supplies actor identity/roles, or dynamically creates tools.
 
 Each tenant is a `Gym`. Tenant roles belong to `GymMembership`, not `User`, so one person can hold different roles in different gyms. `User.systemRole` is reserved for platform-wide access such as `SUPER_ADMIN`.
+
+## AI Agent architecture
+
+```text
+Telegram / future member clients
+              ↓ authenticated user context
+Agent Orchestrator
+              ↓ allow-listed function calls
+Explicit Tool Registry (READ / ACTION / PRIVILEGED)
+              ↓ server-injected actor + tenant scope
+Existing authorized services
+              ↓ deterministic validation and transactions
+PostgreSQL
+```
+
+`src/agent` owns provider-independent orchestration, bounded context, layered policy composition, authorization-aware tool availability, strict Zod schemas, timeouts, and the tool loop. `src/agent/provider.ts` is the small OpenAI Responses API adapter plus a deterministic scripted fake used by tests. The official OpenAI Node SDK produces strict function definitions; the registry validates every function argument again before a handler runs.
+
+The hard limits are five tool rounds and eight total tool calls per user request. A limit, timeout, malformed call, unknown tool, or service failure becomes a structured tool error and an operational log. Failed actions never produce a success confirmation. One `AIEvent` correlates the sanitized request, its `AIToolExecution` rows, latency/model/status, and final sanitized response. API keys, database credentials, raw images, private storage references, and chain-of-thought are never stored in these records.
+
+Tool availability is calculated server-side from the authenticated `User`, active `GymMembership`, and selected gym. Schemas never include `actorUserId`, `systemRole`, `gymRole`, admin/trainer flags, approval status, or reviewer identity. Member contexts cannot see privileged trainer tools. Exercise logging resolves only names/order numbers inside the current authenticated workout; food substitutions resolve only numbered items inside the authenticated active plan. There is no SQL, shell, browsing, generic plan-edit, direct calorie-mutation, approval-bypass, or exact body-fat tool.
+
+The system prompt is composed in priority layers: core fitness safety, tool-use policy, authorization, gym configuration, concise user context, current state, and response style. Gym branding uses `GymSettings.aiDisplayName`, `Gym.aiName`, `GymSettings.defaultLanguage`, and `trainingPhilosophy`, but cannot override safety or approval rules. Iraqi Arabic is the default member experience. Potentially serious symptoms are intercepted before ordinary coaching and receive a non-diagnostic medical-evaluation boundary.
+
+Context is bounded to the active program summary, current session, last three completed sessions, active nutrition targets/meal summary, latest evaluated check-in and trend, latest stored decision, latest text-only photo comparison, and at most 30 active safe memory records. Raw photo bytes, Telegram file IDs, storage keys, and full conversation history are excluded. Responses API continuation exists only inside the five-round request loop.
+
+Long-term optional memory uses `AgentMemory`. Explicit durable food likes/dislikes go to the existing structured `UserProfile` fields first. Other high-confidence preferences use a category/key upsert, so retries update rather than duplicate. Credentials, casual diagnoses, hidden reasoning, and trivial conversation are rejected. `/memory` shows safe user-relevant preferences; `/forget [number]` deactivates only optional `AgentMemory` and cannot remove workouts, measurements, photos, audits, security records, or other operational history.
+
+Natural plan-change requests never directly update a plan. A gym member can request a structured review through the existing `ApprovalRequest` architecture; assignment, trainer identity, review status, and safe application remain server-controlled. Independent users without an already modeled safe self-service mutation path receive review guidance rather than unrestricted mutation.
+
+Telegram's deterministic commands remain separate fallbacks. If OpenAI is unavailable, `/workout`, `/food`, `/progress`, and all other deterministic handlers continue to call services without the LLM.
 
 ## Requirements
 
@@ -215,6 +247,8 @@ Progression uses completed working sets and ignores warmups. When all prescribed
 - `/currentworkout` — display the in-progress session and its logged sets
 - `/logset <exercise_number> <set_number> <weight> <reps> [rir]` — add or correct a working set in the current session
 - `/finishworkout` — complete the current session, calculate duration, and display per-exercise progression recommendations
+- `/memory` — show safe structured preferences and optional durable fitness memory
+- `/forget [number]` — list or deactivate optional memory only
 
 The user starts a session through the inline **ابدأ التمرين** button on a workout day. All commands resolve the Telegram identity to an internal user and enforce program/session ownership in the service layer.
 

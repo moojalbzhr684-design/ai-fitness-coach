@@ -57,6 +57,7 @@ import {
   handleTenantSelectionCallback,
   handleTrainerCommand,
 } from "./trainer.js";
+import { handleForgetCommand, handleMemoryCommand } from "./memory.js";
 
 export function createTelegramBot(): Bot {
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
@@ -117,6 +118,8 @@ export function createTelegramBot(): Bot {
   bot.command("approvals", handleApprovalsCommand);
   bot.command("gym", handleGymCommand);
   bot.command("admin", handleAdminCommand);
+  bot.command("memory", handleMemoryCommand);
+  bot.command("forget", async (ctx) => handleForgetCommand(ctx, ctx.match));
   bot.command("help", async (ctx) => {
     await ctx.reply(
       [
@@ -144,6 +147,8 @@ export function createTelegramBot(): Bot {
         "/approvals - طلبات الموافقة",
         "/gym - ملخص إدارة القاعة",
         "/admin - ملخص مدير المنصة",
+        "/memory - الأشياء الرياضية اللي أتذكرها عنك",
+        "/forget - حذف ذكرى اختيارية بأمان",
         "/help - المساعدة",
         "",
         "بعد ما تكمل الإعداد، تكدر تسألني أسئلة عامة عن الرياضة واللياقة.",

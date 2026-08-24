@@ -18,6 +18,33 @@ export class VisionAnalysisError extends Error {
   }
 }
 
+export async function getLatestPhotoAnalysisSummary(userId: string) {
+  return prisma.progressPhotoAnalysis.findFirst({
+    where: { userId, status: PhotoAnalysisStatus.COMPLETED },
+    orderBy: { createdAt: "desc" },
+    select: {
+      createdAt: true,
+      overallSummary: true,
+      frontSummary: true,
+      sideSummary: true,
+      backSummary: true,
+      symmetryNotes: true,
+      postureNotes: true,
+      muscularityNotes: true,
+      leannessNotes: true,
+      confidenceLabel: true,
+    },
+  });
+}
+
+export async function getPhotoProgressSummary(userId: string) {
+  return prisma.progressPhotoAnalysis.findFirst({
+    where: { userId, status: PhotoAnalysisStatus.COMPLETED },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true, overallSummary: true, comparisonSummary: true, confidenceLabel: true },
+  });
+}
+
 const analysisPhotoInclude = {
   photos: {
     orderBy: { createdAt: "asc" as const },

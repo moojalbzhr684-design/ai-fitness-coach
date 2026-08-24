@@ -1,10 +1,5 @@
-import OpenAI from "openai";
-import { env } from "../config/env.js";
-import { logAIEventError, logAIEventSuccess } from "../services/ai-events.js";
-import { getEffectiveCoachConfiguration } from "../services/coach-configuration.js";
-import { getCoachContext } from "../services/users.js";
-import { safeErrorMessage, truncateText } from "../utils/text.js";
-import { buildCoachInstructions } from "./prompts.js";
+import { AgentUnavailableError } from "../agent/errors.js";
+import { runAgent } from "../agent/orchestrator.js";
 
 export class CoachUnavailableError extends Error {
   constructor() {
@@ -14,68 +9,10 @@ export class CoachUnavailableError extends Error {
 }
 
 export async function askCoach(userId: string, message: string): Promise<string> {
-  const configuration = await getEffectiveCoachConfiguration(userId);
-  const context = await getCoachContext(userId, configuration.gymId ?? undefined);
-
-  if (!context) {
-    throw new Error("User context not found");
-  }
-
-  const gymId = context.gymMemberships[0]?.gymId;
-  const startedAt = Date.now();
-
   try {
-    if (!env.OPENAI_API_KEY) {
-      throw new Error("OPENAI_API_KEY is not configured");
-    }
-
-    const client = new OpenAI({ apiKey: env.OPENAI_API_KEY });
-    const response = await client.responses.create({
-      model: env.OPENAI_MODEL,
-      instructions: buildCoachInstructions(context, configuration),
-      input: message,
-    });
-    const output = response.output_text.trim();
-
-    if (!output) {
-      throw new Error("OpenAI returned an empty response");
-    }
-
-    await logAIEventSuccess({
-      userId,
-      ...(gymId ? { gymId } : {}),
-      eventType: "CHAT",
-      model: env.OPENAI_MODEL,
-      latencyMs: Date.now() - startedAt,
-      inputSummary: truncateText(message),
-      outputSummary: truncateText(output),
-      ...(response.usage?.input_tokens !== undefined
-        ? { inputTokens: response.usage.input_tokens }
-        : {}),
-      ...(response.usage?.output_tokens !== undefined
-        ? { outputTokens: response.usage.output_tokens }
-        : {}),
-    });
-
-    return output;
+    return (await runAgent({ userId, message })).answer;
   } catch (error) {
-    const errorMessage = safeErrorMessage(error, [
-      env.OPENAI_API_KEY ?? "",
-      env.TELEGRAM_BOT_TOKEN,
-      env.DATABASE_URL,
-    ]);
-
-    await logAIEventError({
-      userId,
-      ...(gymId ? { gymId } : {}),
-      eventType: "CHAT",
-      model: env.OPENAI_MODEL,
-      latencyMs: Date.now() - startedAt,
-      inputSummary: truncateText(message),
-      errorMessage,
-    });
-
-    console.error("AI request failed:", errorMessage);
+    if (!(error instanceof AgentUnavailableError)) throw error;
     throw new CoachUnavailableError();
   }
 }

@@ -222,10 +222,14 @@ export async function getAdminAIObservability(actorUserId: string, input: unknow
     ...(filter.gymId ? { gymId: filter.gymId } : {}),
     ...(Object.keys(dateWhere).length ? { createdAt: dateWhere } : {}),
   };
-  const [events, total, totalAll, requestsToday, successes, errors, latency, eventTypes, models, tokenTotals, recentErrors] = await Promise.all([
+  const [events, total, totalAll, requestsToday, successes, errors, latency, eventTypes, models, tokenTotals, recentErrors, toolFailures, toolLatency] = await Promise.all([
     prisma.aIEvent.findMany({
       where, ...pageWindow(filter), orderBy: { createdAt: "desc" },
-      include: { user: { select: { firstName: true, telegramUsername: true } }, gym: { select: { name: true } } },
+      include: {
+        user: { select: { firstName: true, telegramUsername: true } },
+        gym: { select: { name: true } },
+        toolExecutions: { orderBy: { createdAt: "asc" }, take: 8, select: { toolName: true, status: true, durationMs: true } },
+      },
     }),
     prisma.aIEvent.count({ where }),
     prisma.aIEvent.count(),
@@ -237,6 +241,8 @@ export async function getAdminAIObservability(actorUserId: string, input: unknow
     prisma.aIEvent.groupBy({ by: ["model"], where: { model: { not: null } }, _count: { _all: true } }),
     prisma.aIEvent.aggregate({ _sum: { inputTokens: true, outputTokens: true, estimatedCostUsd: true } }),
     prisma.aIEvent.findMany({ where: { status: AIEventStatus.ERROR }, orderBy: { createdAt: "desc" }, take: 10, select: { id: true, eventType: true, model: true, errorMessage: true, createdAt: true } }),
+    prisma.aIToolExecution.count({ where: { status: { in: ["ERROR", "TIMEOUT", "REJECTED"] } } }),
+    prisma.aIToolExecution.aggregate({ _avg: { durationMs: true } }),
   ]);
   return {
     metrics: {
@@ -248,6 +254,8 @@ export async function getAdminAIObservability(actorUserId: string, input: unknow
       inputTokens: tokenTotals._sum.inputTokens,
       outputTokens: tokenTotals._sum.outputTokens,
       estimatedCostUsd: tokenTotals._sum.estimatedCostUsd?.toString() ?? null,
+      toolFailures,
+      averageToolLatencyMs: toolLatency._avg.durationMs,
     },
     eventTypes,
     models,
@@ -264,6 +272,10 @@ export async function getAdminAIEventDetail(actorUserId: string, eventId: string
     include: {
       user: { select: { id: true, firstName: true, telegramUsername: true } },
       gym: { select: { id: true, name: true } },
+      toolExecutions: {
+        orderBy: { createdAt: "asc" },
+        select: { id: true, toolName: true, status: true, durationMs: true, inputSummary: true, outputSummary: true, errorMessage: true, createdAt: true },
+      },
     },
   });
 }

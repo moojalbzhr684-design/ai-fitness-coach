@@ -49,3 +49,37 @@ export async function getCheckInStatus(userId: string) {
   ]);
   return { draft, latest };
 }
+
+export async function getLatestCheckIn(userId: string) {
+  return prisma.weeklyCheckIn.findFirst({
+    where: { userId, status: CheckInStatus.EVALUATED },
+    include: { evaluation: true },
+    orderBy: { evaluatedAt: "desc" },
+  });
+}
+
+export async function getRecentMeasurements(userId: string, limit = 12) {
+  return prisma.bodyMeasurement.findMany({
+    where: { userId },
+    orderBy: { measuredAt: "desc" },
+    take: Math.min(12, Math.max(1, Math.trunc(limit))),
+    select: { weightKg: true, waistCm: true, measuredAt: true, source: true },
+  });
+}
+
+export async function getLatestProgressDecision(userId: string) {
+  return prisma.agentDecision.findFirst({
+    where: { userId, decisionType: "WEEKLY_PROGRESS_REVIEW" },
+    orderBy: { createdAt: "desc" },
+    select: {
+      decisionType: true,
+      oldValue: true,
+      newValue: true,
+      reason: true,
+      requiresCoachApproval: true,
+      approvedAt: true,
+      rejectedAt: true,
+      createdAt: true,
+    },
+  });
+}
