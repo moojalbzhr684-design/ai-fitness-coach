@@ -27,11 +27,14 @@ describe("Member Web Portal regression", () => {
     const publicLogin = readFileSync(resolve(process.cwd(), "app/login/page.tsx"), "utf8");
     const staffLogin = readFileSync(resolve(process.cwd(), "app/staff/login/page.tsx"), "utf8");
     const proxy = readFileSync(resolve(process.cwd(), "app/api/v1/[...path]/route.ts"), "utf8");
+    const productionRouteGuard = readFileSync(resolve(process.cwd(), "proxy.ts"), "utf8");
     expect(publicLogin).toContain("TelegramLogin");
     expect(staffLogin).toContain('process.env.NODE_ENV === "production"');
     expect(staffLogin).toContain("notFound()");
     expect(proxy).toContain("process.env.BACKEND_API_URL");
     expect(proxy).not.toContain("NEXT_PUBLIC_BACKEND");
+    expect(productionRouteGuard).toContain('status: 404');
+    expect(productionRouteGuard).toContain('"/admin"');
   });
 
   it("provides an installable member PWA foundation", () => {

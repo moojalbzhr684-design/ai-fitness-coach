@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { trustedIncomingIp } from "@/lib/proxy-security";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,11 +26,6 @@ function memberCookies(raw: string | null): string | null {
   return cookies.length ? cookies.join("; ") : null;
 }
 
-function trustedIncomingIp(request: NextRequest): string | null {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",").map((value) => value.trim()).filter(Boolean);
-  return forwarded?.at(-1) ?? request.headers.get("x-real-ip")?.trim() ?? null;
-}
-
 async function proxy(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   try {
     const { path } = await context.params;
@@ -42,7 +38,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     const cookie = memberCookies(request.headers.get("cookie"));
     if (cookie) headers.set("cookie", cookie);
     const proxySecret = process.env.MEMBER_PROXY_SECRET;
-    const clientIp = trustedIncomingIp(request);
+    const clientIp = trustedIncomingIp(request.headers);
     if (proxySecret && proxySecret.length >= 32 && clientIp) {
       headers.set("x-afc-proxy-ip", clientIp);
       headers.set("x-afc-proxy-signature", createHmac("sha256", proxySecret).update(clientIp).digest("hex"));
