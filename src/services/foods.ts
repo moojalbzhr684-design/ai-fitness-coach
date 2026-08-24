@@ -120,11 +120,12 @@ export async function getMealItemAlternatives(
   userId: string,
   mealNumber: number,
   foodNumber: number,
+  gymId?: string | null,
 ) {
   if (!Number.isInteger(mealNumber) || mealNumber < 1
     || !Number.isInteger(foodNumber) || foodNumber < 1) return null;
   const plan = await prisma.nutritionPlan.findFirst({
-    where: { userId, status: NutritionPlanStatus.ACTIVE },
+    where: { userId, status: NutritionPlanStatus.ACTIVE, ...(gymId !== undefined ? { gymId } : {}) },
     include: {
       meals: {
         where: { order: mealNumber },

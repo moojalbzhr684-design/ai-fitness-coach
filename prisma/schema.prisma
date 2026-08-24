@@ -283,9 +283,27 @@ enum ApprovalStatus {
   CANCELLED
 }
 
+enum IdentityProvider {
+  TELEGRAM
+  EMAIL
+  PHONE
+  APPLE
+  GOOGLE
+}
+
+enum AuthChallengePurpose {
+  LOGIN
+  LINK_IDENTITY
+}
+
+enum AgentMessageRole {
+  USER
+  ASSISTANT
+}
+
 model User {
   id               String         @id @default(cuid())
-  telegramId       BigInt         @unique
+  telegramId       BigInt?        @unique
   telegramUsername String?
   firstName        String?
   lastName         String?
@@ -318,6 +336,10 @@ model User {
   memberApprovals     ApprovalRequest[]       @relation("ApprovalMember")
   trainerApprovals    ApprovalRequest[]       @relation("ApprovalTrainer")
   reviewedApprovals   ApprovalRequest[]       @relation("ApprovalReviewer")
+  identities          UserIdentity[]
+  authSessions        AuthSession[]
+  authChallenges      AuthChallenge[]
+  agentConversations  AgentConversation[]
 
   @@index([systemRole])
   @@index([onboardingStep])
@@ -388,8 +410,91 @@ model Gym {
   trainerPreferences   TrainerPreferences[]
   approvalRequests     ApprovalRequest[]
   exerciseAvailability GymExerciseAvailability[]
+  agentConversations   AgentConversation[]
 
   @@index([isActive])
+}
+
+model UserIdentity {
+  id              String           @id @default(cuid())
+  userId          String
+  provider        IdentityProvider
+  providerSubject String
+  email           String?
+  phone           String?
+  isVerified      Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  lastUsedAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerSubject])
+  @@index([userId, provider])
+  @@index([email])
+}
+
+model AuthChallenge {
+  id            String               @id @default(cuid())
+  email         String
+  codeHash      String
+  purpose       AuthChallengePurpose
+  linkUserId    String?
+  requestIpHash String?
+  expiresAt     DateTime
+  usedAt        DateTime?
+  attemptCount  Int                  @default(0)
+  createdAt     DateTime             @default(now())
+
+  linkUser User? @relation(fields: [linkUserId], references: [id], onDelete: Cascade)
+
+  @@index([email, purpose, createdAt])
+  @@index([requestIpHash, createdAt])
+  @@index([expiresAt, usedAt])
+}
+
+model AuthSession {
+  id            String    @id @default(cuid())
+  userId        String
+  tokenHash     String    @unique
+  csrfTokenHash String
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  lastUsedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt, expiresAt])
+  @@index([expiresAt])
+}
+
+model AgentConversation {
+  id            String   @id @default(cuid())
+  userId        String
+  gymId         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  lastMessageAt DateTime @default(now())
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym      Gym?           @relation(fields: [gymId], references: [id], onDelete: SetNull)
+  messages AgentMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([gymId, lastMessageAt])
+}
+
+model AgentMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  role           AgentMessageRole
+  content        String
+  createdAt      DateTime         @default(now())
+
+  conversation AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
 }
 
 model GymMembership {

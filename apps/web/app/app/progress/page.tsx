@@ -1,0 +1,17 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { WeightChart } from "@/components/weight-chart";
+import { memberApi } from "@/lib/member-api";
+import { useMemberResource } from "@/lib/use-member-resource";
+
+interface ProgressData { summary: null | { startingWeightKg: number | null; currentWeightKg: number | null; totalChangeKg: number | null; trend: { direction?: string; rateKgPerWeek?: number | null }; latestCheckIn?: { evaluation?: { summary?: string } } }; measurements: Array<{ weightKg: number; measuredAt: string }>; latestDecision: null | { reason: string; requiresCoachApproval: boolean; createdAt: string }; checkIn: { draft: unknown; latest: null | { status: string } } }
+
+export default function ProgressPage() {
+  const { data, loading, error, reload } = useMemberResource<ProgressData>("/api/v1/member/progress"); const [weight, setWeight] = useState(""); const [notice, setNotice] = useState<string | null>(null);
+  async function logWeight(event: FormEvent) { event.preventDefault(); setNotice(null); try { await memberApi("/api/v1/member/weight", { method: "POST", body: JSON.stringify({ weightKg: Number(weight) }) }); setWeight(""); setNotice("تسجل وزنك"); await reload(); } catch (caught) { setNotice(caught instanceof Error ? caught.message : "تعذر تسجيل الوزن"); } }
+  if (loading) return <div className="member-state">نحسب اتجاه تقدمك...</div>;
+  if (error || !data) return <div className="member-alert error">{error ?? "بيانات التقدم مو متوفرة"}</div>;
+  const summary = data.summary;
+  return <div className="member-page"><header className="member-page-header"><p className="member-kicker">التقدم</p><h1>نتائجك بالأرقام</h1><p>الاتجاه والقرارات مأخوذة من قياساتك وتقييماتك المخزونة.</p></header><div className="member-stat-grid"><div className="member-stat"><span>البداية</span><strong>{summary?.startingWeightKg ?? "—"} كغم</strong></div><div className="member-stat"><span>الحالي</span><strong>{summary?.currentWeightKg ?? "—"} كغم</strong></div><div className="member-stat"><span>التغيير</span><strong>{summary?.totalChangeKg ?? "—"} كغم</strong></div><div className="member-stat"><span>الاتجاه</span><strong>{summary?.trend?.direction ?? "غير كافي"}</strong></div></div><section className="member-card"><h2>مخطط الوزن</h2><WeightChart points={data.measurements.map((item) => ({ measuredAt: new Date(item.measuredAt), weightKg: item.weightKg }))} /></section><section className="member-card"><h2>سجل وزنك</h2>{notice ? <div className="member-alert">{notice}</div> : null}<form className="member-inline-form" onSubmit={logWeight}><input aria-label="الوزن بالكيلوغرام" type="number" min={30} max={300} step="0.1" value={weight} onChange={(event) => setWeight(event.target.value)} placeholder="مثلاً 82.5" required /><button className="member-primary-button" type="submit">تسجيل</button></form></section><section className="member-card"><p className="member-kicker">آخر قرار</p>{data.latestDecision ? <><p>{data.latestDecision.reason}</p><span className="member-pill">{data.latestDecision.requiresCoachApproval ? "ينتظر موافقة المدرب" : "ما يحتاج موافقة"}</span></> : <p className="member-muted">ماكو قرار تقدم مخزون بعد.</p>}</section><section className="member-card"><h2>المراجعة الأسبوعية</h2><p>{data.checkIn.latest?.status ?? "ماكو مراجعة مكتملة"}</p><p className="member-muted">إرسال المراجعة المنظمة متاح عبر Member API، وواجهة النموذج الكاملة راح تتوسع بالموبايل.</p></section></div>;
+}

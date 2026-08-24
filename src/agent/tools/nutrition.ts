@@ -14,7 +14,7 @@ export const nutritionTools: AgentToolDefinition[] = [
     category: ToolCategory.READ,
     schema: emptyToolInputSchema,
     handler: async (_input, { actor }) => {
-      const plan = await getActiveNutritionPlan(actor.userId);
+      const plan = await getActiveNutritionPlan(actor.userId, actor.gymId);
       return plan ? {
         status: "found",
         plan: {
@@ -44,7 +44,7 @@ export const nutritionTools: AgentToolDefinition[] = [
     category: ToolCategory.READ,
     schema: emptyToolInputSchema,
     handler: async (_input, { actor }) => {
-      const target = await getNutritionTargets(actor.userId);
+      const target = await getNutritionTargets(actor.userId, actor.gymId);
       return target ? {
         status: "found",
         calories: target.calories,
@@ -60,7 +60,7 @@ export const nutritionTools: AgentToolDefinition[] = [
     description: "Read a concise numbered summary of the authenticated user's active meal plan.",
     category: ToolCategory.READ,
     schema: emptyToolInputSchema,
-    handler: async (_input, { actor }) => ({ status: "ok", summary: await getMealPlanSummary(actor.userId) }),
+    handler: async (_input, { actor }) => ({ status: "ok", summary: await getMealPlanSummary(actor.userId, actor.gymId) }),
   },
   {
     name: "get_food_macros",
@@ -82,7 +82,7 @@ export const nutritionTools: AgentToolDefinition[] = [
     schema: foodSubstitutionInputSchema,
     handler: async (input, { actor }) => {
       const { mealNumber, foodNumber } = foodSubstitutionInputSchema.parse(input);
-      const result = await getMealItemAlternatives(actor.userId, mealNumber, foodNumber);
+      const result = await getMealItemAlternatives(actor.userId, mealNumber, foodNumber, actor.gymId);
       if (!result) return { status: "not_found" };
       return {
         status: result.alternatives.length ? "found" : "no_safe_alternatives",

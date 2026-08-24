@@ -4,9 +4,11 @@ import {
   ExperienceLevel,
   Goal,
   GymRole,
+  IdentityProvider,
   MembershipStatus,
   NutritionPlanStatus,
   OnboardingStep,
+  Prisma,
   PhotoAnalysisStatus,
   Sex,
   SystemRole,
@@ -15,6 +17,7 @@ import {
   WorkoutSessionStatus,
 } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
+import { z } from "zod";
 
 export interface TelegramUserInput {
   telegramId: bigint;
@@ -49,19 +52,41 @@ export async function upsertTelegramUser(
     lastName: input.lastName ?? null,
   };
 
-  return prisma.user.upsert({
-    where: { telegramId: input.telegramId },
-    update: {
-      ...identity,
-      ...(isSuperAdmin ? { systemRole: SystemRole.SUPER_ADMIN } : {}),
-    },
-    create: {
-      telegramId: input.telegramId,
-      ...identity,
-      systemRole: isSuperAdmin ? SystemRole.SUPER_ADMIN : SystemRole.USER,
-      profile: { create: {} },
-    },
-    include: { profile: true },
+  return prisma.$transaction(async (tx) => {
+    const database = tx as unknown as typeof prisma;
+    const user = await database.user.upsert({
+      where: { telegramId: input.telegramId },
+      update: {
+        ...identity,
+        ...(isSuperAdmin ? { systemRole: SystemRole.SUPER_ADMIN } : {}),
+      },
+      create: {
+        telegramId: input.telegramId,
+        ...identity,
+        systemRole: isSuperAdmin ? SystemRole.SUPER_ADMIN : SystemRole.USER,
+        profile: { create: {} },
+      },
+      include: { profile: true },
+    });
+    const providerKey = { provider: IdentityProvider.TELEGRAM, providerSubject: input.telegramId.toString() };
+    const existingIdentity = await database.userIdentity.findUnique({
+      where: { provider_providerSubject: providerKey },
+      select: { id: true, userId: true },
+    });
+    if (existingIdentity && existingIdentity.userId !== user.id) {
+      throw new Error("Telegram identity conflict");
+    }
+    if (existingIdentity) {
+      await database.userIdentity.update({ where: { id: existingIdentity.id }, data: { isVerified: true, lastUsedAt: new Date() } });
+    } else {
+      await database.userIdentity.create({ data: {
+        userId: user.id,
+        ...providerKey,
+        isVerified: true,
+        lastUsedAt: new Date(),
+      } });
+    }
+    return user;
   });
 }
 
@@ -285,3 +310,23 @@ export const profileEnumValues = {
   Sex,
   TrainingPlace,
 };
+
+export const memberProfileUpdateSchema = z.object({
+  heightCm: z.number().finite().min(100).max(250).optional(),
+  activityLevel: z.enum(ActivityLevel).optional(),
+  experienceLevel: z.enum(ExperienceLevel).optional(),
+  goal: z.enum(Goal).optional(),
+  trainingDaysPerWeek: z.number().int().min(1).max(7).optional(),
+  sessionMinutes: z.number().int().min(20).max(180).optional(),
+  trainingPlace: z.enum(TrainingPlace).optional(),
+  mealsPerDay: z.number().int().min(2).max(6).optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, "At least one supported field is required");
+
+export async function updateMemberProfile(userId: string, input: unknown) {
+  const data = Object.fromEntries(
+    Object.entries(memberProfileUpdateSchema.parse(input)).filter((entry) => entry[1] !== undefined),
+  ) as Prisma.UserProfileUpdateManyMutationInput;
+  const updated = await prisma.userProfile.updateMany({ where: { userId }, data });
+  if (updated.count !== 1) throw new Error("Member profile is unavailable");
+  return prisma.userProfile.findUnique({ where: { userId } });
+}

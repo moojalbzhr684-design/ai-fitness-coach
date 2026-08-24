@@ -79,7 +79,7 @@ export const workoutTools: AgentToolDefinition[] = [
     category: ToolCategory.READ,
     schema: emptyToolInputSchema,
     handler: async (_input, { actor }) => {
-      const program = await getActiveWorkoutProgram(actor.userId);
+      const program = await getActiveWorkoutProgram(actor.userId, actor.gymId);
       return program ? { status: "found", program: programOutput(program) } : { status: "not_found" };
     },
   },
@@ -90,7 +90,7 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: workoutDayInputSchema,
     handler: async (input, { actor }) => {
       const { dayNumber } = workoutDayInputSchema.parse(input);
-      const program = await getActiveWorkoutProgram(actor.userId);
+      const program = await getActiveWorkoutProgram(actor.userId, actor.gymId);
       const day = program?.days.find((item) => item.dayNumber === dayNumber);
       if (!day) return { status: "not_found" };
       const stored = await getWorkoutDay(actor.userId, day.id);
@@ -119,7 +119,7 @@ export const workoutTools: AgentToolDefinition[] = [
     category: ToolCategory.READ,
     schema: emptyToolInputSchema,
     handler: async (_input, { actor }) => {
-      const session = await getCurrentWorkoutSession(actor.userId);
+      const session = await getCurrentWorkoutSession(actor.userId, actor.gymId);
       return session ? {
         status: "in_progress",
         dayName: session.workoutDay?.name ?? null,
@@ -138,7 +138,7 @@ export const workoutTools: AgentToolDefinition[] = [
     category: ToolCategory.READ,
     schema: recentHistoryInputSchema,
     handler: async (input, { actor }) => {
-      const history = await getRecentWorkoutHistory(actor.userId, recentHistoryInputSchema.parse(input).limit);
+      const history = await getRecentWorkoutHistory(actor.userId, recentHistoryInputSchema.parse(input).limit, actor.gymId);
       return history.map((session) => ({
         completedAt: session.completedAt,
         durationMinutes: session.durationMinutes,
@@ -158,7 +158,7 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: exerciseReferenceInputSchema,
     handler: async (input, { actor }) => {
       const { exerciseReference } = exerciseReferenceInputSchema.parse(input);
-      const program = await getActiveWorkoutProgram(actor.userId);
+      const program = await getActiveWorkoutProgram(actor.userId, actor.gymId);
       if (!program) return { status: "no_active_program" };
       const resolved = resolveProgramExercise(program, exerciseReference);
       if (!resolved.found) return { status: "clarification_required", options: [...new Set(resolved.options.map((item) => item.exercise.name))] };
@@ -180,7 +180,7 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: exerciseReferenceInputSchema,
     handler: async (input, { actor }) => {
       const { exerciseReference } = exerciseReferenceInputSchema.parse(input);
-      const program = await getActiveWorkoutProgram(actor.userId);
+      const program = await getActiveWorkoutProgram(actor.userId, actor.gymId);
       if (!program) return { status: "no_active_program" };
       const resolved = resolveProgramExercise(program, exerciseReference);
       if (!resolved.found) return { status: "clarification_required", options: [...new Set(resolved.options.map((item) => item.exercise.name))] };
@@ -207,11 +207,11 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: exerciseReferenceInputSchema,
     handler: async (input, { actor }) => {
       const { exerciseReference } = exerciseReferenceInputSchema.parse(input);
-      const session = await getCurrentWorkoutSession(actor.userId);
+      const session = await getCurrentWorkoutSession(actor.userId, actor.gymId);
       const current = session ? resolveSessionExercise(session, exerciseReference) : null;
       let exercise = current?.found?.exercise;
       if (!exercise) {
-        const program = await getActiveWorkoutProgram(actor.userId);
+        const program = await getActiveWorkoutProgram(actor.userId, actor.gymId);
         const resolved = program ? resolveProgramExercise(program, exerciseReference) : null;
         if (!resolved?.found) return { status: "clarification_required", options: resolved?.options.map((item) => item.exercise.name) ?? [] };
         exercise = resolved.found.exercise;
@@ -227,9 +227,9 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: startWorkoutInputSchema,
     handler: async (input, { actor }) => {
       const { dayNumber } = startWorkoutInputSchema.parse(input);
-      const current = await getCurrentWorkoutSession(actor.userId);
+      const current = await getCurrentWorkoutSession(actor.userId, actor.gymId);
       if (current) return { status: "already_in_progress", dayName: current.workoutDay?.name ?? null };
-      const program = await getActiveWorkoutProgram(actor.userId);
+      const program = await getActiveWorkoutProgram(actor.userId, actor.gymId);
       if (!program) return { status: "no_active_program" };
       if (dayNumber === null && program.days.length !== 1) {
         return { status: "clarification_required", options: program.days.map((day) => ({ dayNumber: day.dayNumber, name: day.name })) };
@@ -251,7 +251,7 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: logWorkoutSetInputSchema,
     handler: async (input, { actor }) => {
       const parsed = logWorkoutSetInputSchema.parse(input);
-      const session = await getCurrentWorkoutSession(actor.userId);
+      const session = await getCurrentWorkoutSession(actor.userId, actor.gymId);
       if (!session) return { status: "no_active_session" };
       const resolved = resolveSessionExercise(session, parsed.exerciseReference);
       if (!resolved.found) {
@@ -263,6 +263,7 @@ export const workoutTools: AgentToolDefinition[] = [
       }
       const result = await logExerciseSet({
         userId: actor.userId,
+        gymId: actor.gymId,
         exerciseNumber: resolved.found.order,
         setNumber: parsed.setNumber,
         weightKg: parsed.weightKg,
@@ -279,7 +280,7 @@ export const workoutTools: AgentToolDefinition[] = [
     schema: finishWorkoutInputSchema,
     handler: async (input, { actor }) => {
       const { notes } = finishWorkoutInputSchema.parse(input);
-      const result = await completeWorkoutSession(actor.userId, notes ?? undefined);
+      const result = await completeWorkoutSession(actor.userId, notes ?? undefined, actor.gymId);
       return { status: "completed", durationMinutes: result.durationMinutes, exercises: result.exercises };
     },
   },

@@ -1,6 +1,6 @@
-# AI Fitness Coach — Milestone 8
+# AI Fitness Coach — Milestone 9
 
-Production-oriented multi-tenant AI fitness platform with Telegram coaching and role-scoped web dashboards. Milestone 8 turns normal conversation into an allow-listed AI Agent that reads real platform data and invokes narrow authorized services. Payments, device integrations, public galleries, mobile apps, browsing, voice, WhatsApp, and per-gym bot tokens remain out of scope.
+Production-oriented multi-tenant AI fitness platform with Telegram coaching, a secured versioned Member API, a mobile-first Member Web Portal, and role-scoped staff dashboards. Milestone 9 evolves Telegram-linked users into one cross-channel identity and gives future mobile clients the same Agent and deterministic services. Native mobile, payments, device integrations, public galleries, browsing, voice, WhatsApp, and per-gym bot tokens remain out of scope.
 
 ## Architecture
 
@@ -10,14 +10,13 @@ Central AI Platform / SUPER_ADMIN
                  ├─ Gym A ─ Owner ─ Trainers ─ Members
                  └─ Gym B ─ Owner ─ Trainers ─ Members
                                  │
-Telegram Bot ─┐
-              ├─> Agent Orchestrator ─> Explicit Tool Registry ─┐
-Future Apps ──┘                                                │
-Next.js Web ─────> auth + tenant scope ────────────────────────┼─> reusable services ─> PostgreSQL
-                                                             │   ├─ Workout / equipment rules
-                                         ├─ Nutrition / versioned plans
-                                         ├─ Progress / approval workflow
-                                         └─ Private media / vision boundary
+Telegram ───────┐
+                │
+Member Web ─────┼──> Authenticated Member API ──> Agent / core services ──> PostgreSQL
+                │
+Future Mobile ──┘
+
+Staff Web ──> staff auth + tenant scope ──> the same core services
 ```
 
 Telegram handlers and Next.js server actions are thin interfaces over the same reusable services. Program selection, prescription validation, ownership checks, approval application, session state, and progression remain outside both interfaces. The dashboard does not contain a second implementation of business rules.
@@ -55,6 +54,64 @@ Long-term optional memory uses `AgentMemory`. Explicit durable food likes/dislik
 Natural plan-change requests never directly update a plan. A gym member can request a structured review through the existing `ApprovalRequest` architecture; assignment, trainer identity, review status, and safe application remain server-controlled. Independent users without an already modeled safe self-service mutation path receive review guidance rather than unrestricted mutation.
 
 Telegram's deterministic commands remain separate fallbacks. If OpenAI is unavailable, `/workout`, `/food`, `/progress`, and all other deterministic handlers continue to call services without the LLM.
+
+## Platform identity and member authentication
+
+One person has one `User`. Provider accounts are attached through `UserIdentity` with a unique `(provider, providerSubject)` pair. Existing `User.telegramId` remains as a nullable compatibility column; the Milestone 9 migration idempotently backfills verified `TELEGRAM` identities without creating duplicate users. New verified email users may start without Telegram. A later authenticated linking flow attaches a verified email to the existing user; names and unverified addresses are never merge signals. The provider enum already reserves additive paths for phone, Apple, and Google without implementing those providers.
+
+```text
+Email
+  ↓ request generic challenge
+OTP Challenge (salted scrypt hash, expiry, attempts, single use)
+  ↓ successful verification
+UserIdentity
+  ↓
+Opaque server-side AuthSession
+  ↓ cookie or bearer token
+Versioned Member API
+```
+
+Member sessions use 256-bit random opaque tokens. Only a SHA-256 token hash, CSRF-token hash, expiry, revocation state, and activity timestamps are stored. The browser receives a Secure-in-production, HTTP-only, SameSite=Strict session cookie plus a double-submit CSRF cookie/header for mutations. Future mobile clients may request and send the same revocable opaque token as `Authorization: Bearer ...`; authorization roles and gym scope are always reloaded from PostgreSQL. Logout revokes the server record before clearing cookies, and the session endpoints can list/revoke the authenticated user's own sessions.
+
+OTP codes are cryptographically random six-digit values, expire after ten minutes by default, are single-use, and lock after five attempts. Request limits apply per normalized email and hashed IP; verification is additionally bounded by the persisted challenge attempt count. Responses are deliberately generic and login-code requests do not query user existence. The built-in `DevelopmentEmailProvider` prints a code only when `NODE_ENV` is not `production`. Production deliberately fails closed until a real `EmailProvider` is configured—never enable or copy the development delivery behavior into production.
+
+The staff dashboard's Milestone 7 development login remains separate and remains disabled in production. It is not a member login and was not generalized into the production member identity flow.
+
+## Member API
+
+Fastify exposes JSON under `/api/v1`. Successes use `{ "data": ... }`; failures use `{ "error": { "code": "...", "message": "..." } }` and never include a stack trace. Actor IDs, system roles, gym roles, and tenant authorization are derived from the authenticated session. `X-Gym-Id` is accepted only as a selection among the actor's active `MEMBER` memberships; a foreign tenant is rejected and multiple memberships require an explicit selection.
+
+Authentication endpoints:
+
+- `POST /api/v1/auth/otp/request`
+- `POST /api/v1/auth/otp/verify`
+- `POST /api/v1/auth/link/email/request`
+- `POST /api/v1/auth/link/email/verify`
+- `GET /api/v1/auth/csrf` (authenticated CSRF rotation/recovery)
+- `GET /api/v1/auth/sessions`
+- `POST /api/v1/auth/sessions/revoke`
+- `POST /api/v1/auth/logout`
+
+Member endpoints:
+
+- `GET /api/v1/member/me`, `PATCH /api/v1/member/profile`, `GET /api/v1/member/home`
+- `GET /api/v1/member/workout`, `GET /workout/current`, and `POST /workout/start|set|finish`
+- `GET /api/v1/member/nutrition`, `/nutrition/targets`, `/nutrition/macros`, `/nutrition/substitutions`
+- `GET /api/v1/member/progress`, `POST /member/weight`, `GET|POST /member/checkin`
+- `GET /api/v1/member/photos`, `GET /photos/latest`, `DELETE /photos/:photoSetRef`
+- `GET /api/v1/member/agent/conversation`, `POST /agent/message`
+
+Workout mutations reuse the Milestone 8 strict tool schemas and allow-listed registry, which delegates to existing workout services. Nutrition substitutions retain allergy, restriction, dislike, and quantity calculations. There is intentionally no calorie-edit endpoint. Check-ins accept a structured payload and reuse the persistent step/evaluation services instead of simulating Telegram messages. Photo responses contain dates, views, statuses, and existing text analysis only—never Telegram file IDs, storage keys, image bytes, or public URLs. The Agent endpoint calls the single Milestone 8 orchestrator with a forced member-only actor and a scripted provider can be injected in tests.
+
+Conversation UX is stored as `AgentConversation` plus visible `USER`/`ASSISTANT` `AgentMessage` rows. Tool payloads, hidden reasoning, images, and credentials are never conversation messages. Storage is capped at 100 messages per conversation and only the latest 12 visible messages are supplied to the model alongside the structured long-term context. Staff dashboards do not expose these conversations; operational debugging continues through sanitized `AIEvent` and `AIToolExecution` records.
+
+API CORS accepts only `MEMBER_ALLOWED_ORIGINS`, never wildcard credentialed origins. API and Next.js responses set content-type, referrer, frame, permissions, and practical CSP protections. Cookie mutations require CSRF; bearer requests do not use browser CSRF. OTP and Agent endpoints have configurable basic rate limits. The in-process Agent limiter is suitable for the current single backend deployment; a horizontally scaled deployment should replace it with a shared atomic limiter before scale-out.
+
+## Member Web Portal
+
+The responsive portal is under `/app`, with `/app/coach`, `/app/workout`, `/app/nutrition`, `/app/progress`, `/app/photos`, and `/app/profile`; `/app/login` is the passwordless entry. It calls the Member API rather than Prisma or duplicated business logic. The interface uses large tap targets, a fixed bottom navigation, responsive charts/forms, and a 320px layout. Gym display name, AI name, and validated six-digit hex colors are used when available; database content cannot inject CSS. Independent users receive neutral platform branding.
+
+The portal includes a basic manifest and safe local SVG icon for installability. It does not implement offline data caching or secure photo upload transport. The photo page therefore presents only metadata and stored text summaries. Development configuration uses `NEXT_PUBLIC_MEMBER_API_URL`; its origin is also included in the generated web CSP.
 
 ## Requirements
 

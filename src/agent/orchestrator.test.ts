@@ -57,6 +57,16 @@ describe("Agent orchestrator loop", () => {
     expect(mocks.finishSuccess).toHaveBeenCalledWith(expect.objectContaining({ aiEventId: "event-a", model: "fake-model" }));
   });
 
+  it("forces member-only context and sends only bounded visible conversation history", async () => {
+    const provider = new FakeAgentProvider([response("r1", [], "تمام")]);
+    const history = Array.from({ length: 20 }, (_, index) => ({ role: index % 2 ? "ASSISTANT" as const : "USER" as const, content: `message-${index}` }));
+    await runAgent({ userId: "member-a", message: "هسه شسوي؟", memberMode: true, recentMessages: history, provider, registry: testRegistry() });
+    expect(mocks.buildContext).toHaveBeenCalledWith("member-a", undefined, { memberOnly: true });
+    expect(provider.requests[0]?.input).toContain("message-8");
+    expect(provider.requests[0]?.input).not.toContain("message-7\n");
+    expect(provider.requests[0]?.input).toContain("Current user message: هسه شسوي؟");
+  });
+
   it("enforces the total tool call limit without executing overflow", async () => {
     const calls = Array.from({ length: MAX_TOTAL_TOOL_CALLS + 1 }, (_, index) => ({ callId: `c${index}`, name: "test_tool", arguments: { value: index } }));
     const handler = vi.fn(async () => ({}));

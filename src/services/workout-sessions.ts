@@ -30,18 +30,18 @@ const currentSessionInclude = {
   },
 } as const;
 
-export async function getCurrentWorkoutSession(userId: string) {
+export async function getCurrentWorkoutSession(userId: string, gymId?: string | null) {
   return prisma.workoutSession.findFirst({
-    where: { userId, status: WorkoutSessionStatus.IN_PROGRESS },
+    where: { userId, status: WorkoutSessionStatus.IN_PROGRESS, ...(gymId !== undefined ? { gymId } : {}) },
     include: currentSessionInclude,
     orderBy: { startedAt: "desc" },
   });
 }
 
-export async function getRecentWorkoutHistory(userId: string, limit = 5) {
+export async function getRecentWorkoutHistory(userId: string, limit = 5, gymId?: string | null) {
   const take = Math.min(5, Math.max(1, Math.trunc(limit)));
   return prisma.workoutSession.findMany({
-    where: { userId, status: WorkoutSessionStatus.COMPLETED },
+    where: { userId, status: WorkoutSessionStatus.COMPLETED, ...(gymId !== undefined ? { gymId } : {}) },
     orderBy: { completedAt: "desc" },
     take,
     select: {
@@ -108,6 +108,7 @@ export async function startWorkoutSession(userId: string, workoutDayId: string) 
 
 export interface LogExerciseSetInput {
   userId: string;
+  gymId?: string | null;
   exerciseNumber: number;
   setNumber: number;
   weightKg: number | null;
@@ -136,7 +137,7 @@ function validateSetInput(input: LogExerciseSetInput): void {
 
 export async function logExerciseSet(input: LogExerciseSetInput) {
   validateSetInput(input);
-  const session = await getCurrentWorkoutSession(input.userId);
+  const session = await getCurrentWorkoutSession(input.userId, input.gymId);
   if (!session || !session.workoutDay) {
     throw new WorkoutSessionError("No in-progress workout found");
   }
@@ -183,8 +184,9 @@ export interface CompletedExerciseSummary {
 export async function completeWorkoutSession(
   userId: string,
   userNotes?: string,
+  gymId?: string | null,
 ): Promise<{ sessionId: string; durationMinutes: number | null; exercises: CompletedExerciseSummary[] }> {
-  const session = await getCurrentWorkoutSession(userId);
+  const session = await getCurrentWorkoutSession(userId, gymId);
   if (!session || !session.workoutDay) {
     throw new WorkoutSessionError("No in-progress workout found");
   }

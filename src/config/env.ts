@@ -17,6 +17,13 @@ const envSchema = z.object({
   ),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  MEMBER_ALLOWED_ORIGINS: z.string().trim().default("http://localhost:3001"),
+  MEMBER_SESSION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
+  AUTH_OTP_EXPIRY_MINUTES: z.coerce.number().int().min(3).max(30).default(10),
+  AUTH_OTP_MAX_ATTEMPTS: z.coerce.number().int().min(3).max(10).default(5),
+  AUTH_OTP_REQUESTS_PER_WINDOW: z.coerce.number().int().min(1).max(20).default(5),
+  AUTH_OTP_WINDOW_MINUTES: z.coerce.number().int().min(1).max(60).default(15),
+  AGENT_MESSAGES_PER_MINUTE: z.coerce.number().int().min(1).max(60).default(12),
 });
 
 const result = envSchema.safeParse(process.env);

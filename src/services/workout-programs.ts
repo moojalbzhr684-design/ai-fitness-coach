@@ -30,9 +30,9 @@ const programInclude = {
   },
 } as const;
 
-export async function getActiveWorkoutProgram(userId: string) {
+export async function getActiveWorkoutProgram(userId: string, gymId?: string | null) {
   return prisma.workoutProgram.findFirst({
-    where: { userId, status: WorkoutProgramStatus.ACTIVE },
+    where: { userId, status: WorkoutProgramStatus.ACTIVE, ...(gymId !== undefined ? { gymId } : {}) },
     include: programInclude,
     orderBy: { startedAt: "desc" },
   });

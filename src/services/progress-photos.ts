@@ -449,3 +449,32 @@ export async function deleteLatestProgressPhotoSet(params: {
   });
   return { deletedPhotoSetId: latest.id, deletedPhotoCount: mediaIds.length };
 }
+
+export async function deleteMemberProgressPhotoSet(userId: string, photoSetRef: string) {
+  const photoSet = await prisma.progressPhotoSet.findFirst({
+    where: { id: photoSetRef, userId },
+    include: { photos: { include: { media: true } } },
+  });
+  if (!photoSet) throw new ProgressPhotoError("SET_NOT_FOUND", "Progress photo set not found");
+  if (photoSet.photos.some((photo) => photo.media.storageKey !== null)) {
+    throw new ProgressPhotoError("PRIVACY_NOT_ALLOWED", "This photo set requires managed storage deletion");
+  }
+  const mediaIds = photoSet.photos.map((photo) => photo.mediaId);
+  await prisma.$transaction(async (tx) => {
+    const database = tx as unknown as typeof prisma;
+    const deleted = await database.progressPhotoSet.deleteMany({ where: { id: photoSetRef, userId } });
+    if (deleted.count !== 1) throw new ProgressPhotoError("SET_NOT_FOUND", "Progress photo set not found");
+    if (mediaIds.length) await database.media.deleteMany({ where: { id: { in: mediaIds }, userId } });
+    await database.auditLog.create({
+      data: {
+        actorUserId: userId,
+        gymId: photoSet.gymId,
+        action: "PROGRESS_PHOTOS_DELETED",
+        targetType: "ProgressPhotoSet",
+        targetId: photoSet.id,
+        metadata: { photoCount: mediaIds.length, source: "MEMBER_API" },
+      },
+    });
+  });
+  return { deletedPhotoSetRef: photoSet.id, deletedPhotoCount: mediaIds.length };
+}

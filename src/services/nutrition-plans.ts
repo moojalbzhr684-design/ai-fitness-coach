@@ -42,25 +42,25 @@ const planInclude = {
   },
 } as const;
 
-export async function getActiveNutritionPlan(userId: string) {
+export async function getActiveNutritionPlan(userId: string, gymId?: string | null) {
   return prisma.nutritionPlan.findFirst({
-    where: { userId, status: NutritionPlanStatus.ACTIVE },
+    where: { userId, status: NutritionPlanStatus.ACTIVE, ...(gymId !== undefined ? { gymId } : {}) },
     include: planInclude,
     orderBy: { startedAt: "desc" },
   });
 }
 
-export async function getNutritionTargets(userId: string) {
+export async function getNutritionTargets(userId: string, gymId?: string | null) {
   const plan = await prisma.nutritionPlan.findFirst({
-    where: { userId, status: NutritionPlanStatus.ACTIVE },
+    where: { userId, status: NutritionPlanStatus.ACTIVE, ...(gymId !== undefined ? { gymId } : {}) },
     include: { target: true },
     orderBy: { startedAt: "desc" },
   });
   return plan?.target ?? null;
 }
 
-export async function getMealPlanSummary(userId: string) {
-  const plan = await getActiveNutritionPlan(userId);
+export async function getMealPlanSummary(userId: string, gymId?: string | null) {
+  const plan = await getActiveNutritionPlan(userId, gymId);
   if (!plan) return null;
   return {
     calories: plan.target.calories,

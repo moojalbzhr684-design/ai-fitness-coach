@@ -54,7 +54,7 @@ describe("nutrition Agent tools", () => {
       alternatives: [{ food: { name: "Lean beef", nameAr: "لحم قليل الدهون" }, quantityGrams: 135, calories: 300, proteinGrams: 45, carbsGrams: 0, fatGrams: 12 }],
     });
     const result = await find(nutritionTools, "find_food_substitutions").handler({ mealNumber: 2, foodNumber: 1 }, context);
-    expect(mocks.alternatives).toHaveBeenCalledWith("member-a", 2, 1);
+    expect(mocks.alternatives).toHaveBeenCalledWith("member-a", 2, 1, "gym-a");
     expect(result).toMatchObject({ status: "found", original: { quantityGrams: 150 }, alternatives: [{ quantityGrams: 135 }] });
   });
 

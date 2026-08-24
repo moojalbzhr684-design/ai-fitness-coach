@@ -1,4 +1,4 @@
-import { MembershipStatus } from "../generated/prisma/client.js";
+import { GymRole, MembershipStatus, SystemRole } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 import { getSafeMemorySummary } from "../services/agent-memory.js";
 import { getEffectiveCoachConfiguration } from "../services/coach-configuration.js";
@@ -36,7 +36,11 @@ export interface BuiltAgentContext {
   memory: Awaited<ReturnType<typeof getSafeMemorySummary>>;
   gymOptions: Array<{ gymId: string; name: string }>;
 }
-export async function buildAgentContext(userId: string, requestedGymId?: string): Promise<BuiltAgentContext> {
+export async function buildAgentContext(
+  userId: string,
+  requestedGymId?: string,
+  options: { memberOnly?: boolean } = {},
+): Promise<BuiltAgentContext> {
   const userIdentity = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -49,22 +53,25 @@ export async function buildAgentContext(userId: string, requestedGymId?: string)
     },
   });
   if (!userIdentity) throw new Error("User context not found");
+  const availableMemberships = options.memberOnly
+    ? userIdentity.gymMemberships.filter((membership) => membership.role === GymRole.MEMBER)
+    : userIdentity.gymMemberships;
   const selected = requestedGymId
-    ? userIdentity.gymMemberships.find((membership) => membership.gymId === requestedGymId)
-    : userIdentity.gymMemberships.length === 1 ? userIdentity.gymMemberships[0] : undefined;
+    ? availableMemberships.find((membership) => membership.gymId === requestedGymId)
+    : availableMemberships.length === 1 ? availableMemberships[0] : undefined;
   if (requestedGymId && !selected) throw new Error("Requested gym is outside the user's active scope");
-  const gymSelectionRequired = !requestedGymId && userIdentity.gymMemberships.length > 1;
+  const gymSelectionRequired = !requestedGymId && availableMemberships.length > 1;
   const gymId = selected?.gymId ?? null;
   const configuration = gymSelectionRequired
     ? null
     : await getEffectiveCoachConfiguration(userId, gymId ?? undefined);
   const [user, program, currentSession, recentSessions, targets, planSummary, progress, latestDecision, photos, memory, trainer] = await Promise.all([
     getUserProfileById(userId),
-    getActiveWorkoutProgram(userId),
-    getCurrentWorkoutSession(userId),
-    getRecentWorkoutHistory(userId, 3),
-    getNutritionTargets(userId),
-    getMealPlanSummary(userId),
+    getActiveWorkoutProgram(userId, gymId),
+    getCurrentWorkoutSession(userId, gymId),
+    getRecentWorkoutHistory(userId, 3, gymId),
+    getNutritionTargets(userId, gymId),
+    getMealPlanSummary(userId, gymId),
     getProgressSummary(userId),
     getLatestProgressDecision(userId),
     getPhotoProgressSummary(userId),
@@ -75,8 +82,8 @@ export async function buildAgentContext(userId: string, requestedGymId?: string)
     actor: {
       userId,
       gymId,
-      systemRole: userIdentity.systemRole,
-      gymRole: selected?.role ?? null,
+      systemRole: options.memberOnly ? SystemRole.USER : userIdentity.systemRole,
+      gymRole: options.memberOnly ? (selected ? GymRole.MEMBER : null) : selected?.role ?? null,
       allowActions: true,
       gymSelectionRequired,
     },
@@ -104,7 +111,7 @@ export async function buildAgentContext(userId: string, requestedGymId?: string)
     progress: { summary: progress, latestDecision },
     photos,
     memory,
-    gymOptions: userIdentity.gymMemberships.map((membership) => ({
+    gymOptions: availableMemberships.map((membership) => ({
       gymId: membership.gymId,
       name: membership.gym.settings?.displayName ?? membership.gym.name,
     })),

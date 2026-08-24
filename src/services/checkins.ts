@@ -7,6 +7,7 @@ import {
   ProgressDecisionAction,
   WorkoutSessionStatus,
 } from "../generated/prisma/client.js";
+import { z } from "zod";
 import { prisma } from "../lib/prisma.js";
 import {
   calculateBmr,
@@ -363,7 +364,7 @@ export async function completeDraftCheckIn(userId: string) {
   return { ...result, approvalRequest };
 }
 
-export async function logManualWeight(userId: string, weightKg: number) {
+export async function logManualWeight(userId: string, weightKg: number, requestedGymId?: string) {
   try {
     validateWeightKg(weightKg);
   } catch (error) {
@@ -376,13 +377,18 @@ export async function logManualWeight(userId: string, weightKg: number) {
       include: {
         profile: true,
         gymMemberships: {
-          where: { status: MembershipStatus.ACTIVE, gym: { isActive: true } },
+          where: {
+            status: MembershipStatus.ACTIVE,
+            gym: { isActive: true },
+            ...(requestedGymId ? { gymId: requestedGymId } : {}),
+          },
           orderBy: { createdAt: "desc" },
           take: 1,
         },
       },
     });
     if (!user?.profile) throw new CheckInError("USER_NOT_READY", "User profile is unavailable");
+    if (requestedGymId && !user.gymMemberships[0]) throw new CheckInError("INVALID_GYM", "Selected gym is outside the user's active memberships");
     const gymId = user.gymMemberships[0]?.gymId ?? null;
     const measurement = await transaction.bodyMeasurement.create({
       data: { userId, gymId, weightKg, measuredAt: new Date(), source: "MANUAL" },
@@ -400,4 +406,40 @@ export async function logManualWeight(userId: string, weightKg: number) {
     });
     return measurement;
   });
+}
+
+export const structuredCheckInSchema = z.object({
+  weightKg: z.number().finite().min(30).max(300),
+  waistCm: z.number().finite().min(30).max(250).nullable().optional(),
+  nutritionAdherencePct: z.number().int().min(0).max(100),
+  workoutsCompleted: z.number().int().min(0).max(14),
+  averageDailySteps: z.number().int().min(0).max(100_000).nullable().optional(),
+  averageSleepHours: z.number().finite().min(0).max(16),
+  hungerRating: z.number().int().min(1).max(5),
+  energyRating: z.number().int().min(1).max(5),
+  notes: z.string().trim().max(1_000).nullable().optional(),
+}).strict();
+
+export async function submitStructuredCheckIn(userId: string, input: unknown, requestedGymId?: string) {
+  const data = structuredCheckInSchema.parse(input);
+  let draft = (await getOrCreateDraftCheckIn(userId, requestedGymId)).checkIn;
+  const steps: Array<{ expectedStep: CheckInStep; nextStep: CheckInStep; data: CheckInAnswerData }> = [
+    { expectedStep: CheckInStep.WEIGHT, nextStep: CheckInStep.WAIST, data: { weightKg: data.weightKg } },
+    { expectedStep: CheckInStep.WAIST, nextStep: CheckInStep.NUTRITION_ADHERENCE, data: { waistCm: data.waistCm ?? null } },
+    { expectedStep: CheckInStep.NUTRITION_ADHERENCE, nextStep: CheckInStep.WORKOUTS_COMPLETED, data: { nutritionAdherencePct: data.nutritionAdherencePct } },
+    { expectedStep: CheckInStep.WORKOUTS_COMPLETED, nextStep: CheckInStep.STEPS, data: { workoutsCompleted: data.workoutsCompleted } },
+    { expectedStep: CheckInStep.STEPS, nextStep: CheckInStep.SLEEP, data: { averageDailySteps: data.averageDailySteps ?? null } },
+    { expectedStep: CheckInStep.SLEEP, nextStep: CheckInStep.HUNGER, data: { averageSleepHours: data.averageSleepHours } },
+    { expectedStep: CheckInStep.HUNGER, nextStep: CheckInStep.ENERGY, data: { hungerRating: data.hungerRating } },
+    { expectedStep: CheckInStep.ENERGY, nextStep: CheckInStep.NOTES, data: { energyRating: data.energyRating } },
+    { expectedStep: CheckInStep.NOTES, nextStep: CheckInStep.COMPLETE, data: { notes: data.notes ?? null } },
+  ];
+  const currentIndex = steps.findIndex((step) => step.expectedStep === draft.currentStep);
+  if (draft.currentStep !== CheckInStep.COMPLETE && currentIndex < 0) {
+    throw new CheckInError("STALE_STEP", "Draft check-in state is unavailable");
+  }
+  for (const step of currentIndex < 0 ? [] : steps.slice(currentIndex)) {
+    draft = (await saveCheckInAnswer({ userId, ...step }))!;
+  }
+  return completeDraftCheckIn(userId);
 }

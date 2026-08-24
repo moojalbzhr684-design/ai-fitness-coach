@@ -66,7 +66,7 @@ beforeEach(() => {
 describe("workout Agent tools", () => {
   it("returns the authenticated user's active program without model-controlled identity", async () => {
     const result = await tool("get_active_workout_program").handler({}, execution);
-    expect(mocks.getActiveProgram).toHaveBeenCalledWith("member-a");
+    expect(mocks.getActiveProgram).toHaveBeenCalledWith("member-a", "gym-a");
     expect(result).toMatchObject({ status: "found", program: { trainingDaysPerWeek: 2 } });
   });
 
@@ -99,13 +99,13 @@ describe("workout Agent tools", () => {
   it("logs a valid set only by current-session exercise order", async () => {
     mocks.getCurrent.mockResolvedValue(current);
     const result = await tool("log_workout_set").handler({ exerciseReference: "Bench Press", setNumber: 1, weightKg: 60, reps: 10, rir: 2 }, execution);
-    expect(mocks.log).toHaveBeenCalledWith({ userId: "member-a", exerciseNumber: 1, setNumber: 1, weightKg: 60, reps: 10, rir: 2 });
+    expect(mocks.log).toHaveBeenCalledWith({ userId: "member-a", gymId: "gym-a", exerciseNumber: 1, setNumber: 1, weightKg: 60, reps: 10, rir: 2 });
     expect(result).toMatchObject({ status: "logged", exercise: "Bench Press" });
   });
 
   it("finishes through the workout service and returns its real progression result", async () => {
     const result = await tool("finish_workout").handler({ notes: "زين" }, execution);
-    expect(mocks.complete).toHaveBeenCalledWith("member-a", "زين");
+    expect(mocks.complete).toHaveBeenCalledWith("member-a", "زين", "gym-a");
     expect(result).toMatchObject({ status: "completed", durationMinutes: 45, exercises: [{ recommendation: { action: "REPEAT" } }] });
   });
 });
