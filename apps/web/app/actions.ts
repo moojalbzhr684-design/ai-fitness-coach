@@ -44,10 +44,10 @@ export async function developmentLoginAction(formData: FormData): Promise<void> 
   const token = tokenSchema.safeParse(formData.get("token"));
   const config = assertDevelopmentLoginEnabled();
   if (!token.success || !developmentTokenMatches(token.data, config.loginToken)) {
-    redirect("/login?error=Invalid+development+access+token");
+    redirect("/staff/login?error=Invalid+development+access+token");
   }
   const user = await prisma.user.findUnique({ where: { telegramId: BigInt(config.telegramId) }, select: { id: true } });
-  if (!user) redirect("/login?error=Configured+dashboard+account+was+not+found");
+  if (!user) redirect("/staff/login?error=Configured+dashboard+account+was+not+found");
   const store = await cookies();
   store.set(
     DASHBOARD_SESSION_COOKIE,
@@ -59,7 +59,7 @@ export async function developmentLoginAction(formData: FormData): Promise<void> 
 
 export async function logoutAction(): Promise<void> {
   await clearDashboardSession();
-  redirect("/login");
+  redirect("/staff/login");
 }
 
 export async function approveDashboardRequestAction(returnTo: string, requestId: string, formData: FormData): Promise<void> {

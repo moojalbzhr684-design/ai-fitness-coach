@@ -180,9 +180,10 @@ input:focus, select:focus, textarea:focus { border-color: #4e8e8b; box-shadow: 0
 }
 
 /* Member portal: isolated mobile-first product surface. */
-.member-shell { --member-primary: #2563eb; --member-secondary: #16a34a; min-height: 100vh; padding-bottom: 82px; background: #f4f7fb; color: #122033; }
+.member-shell { --member-primary: #2563eb; --member-secondary: #16a34a; min-height: 100dvh; padding-bottom: 82px; background: #f4f7fb; color: #122033; }
 .member-topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 10px max(16px, env(safe-area-inset-left)); border-bottom: 1px solid #e1e7ef; background: rgba(255,255,255,.94); backdrop-filter: blur(16px); }
 .member-brand { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.member-brand strong { min-width: 0; }
 .member-brand span, .member-login-logo { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 13px; color: white; background: linear-gradient(140deg, #2563eb, #16a34a); font-weight: 900; letter-spacing: -.08em; }
 .member-top-actions { display: flex; align-items: center; gap: 13px; color: #526277; font-size: 13px; }
 .member-top-actions a, .member-top-actions button { min-height: 44px; display: inline-flex; align-items: center; border: 0; background: transparent; color: inherit; cursor: pointer; }
@@ -235,11 +236,32 @@ input:focus, select:focus, textarea:focus { border-color: #4e8e8b; box-shadow: 0
 .member-bottom-nav a { min-width: 0; min-height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #718095; font-size: 10px; border-radius: 12px; }
 .member-bottom-nav a span { font-size: 19px; line-height: 1; }
 .member-bottom-nav a.active { color: var(--member-primary, #2563eb); background: #eef4ff; font-weight: 850; }
-.member-login { min-height: 100vh; padding: 22px 14px; display: grid; place-items: center; background: radial-gradient(circle at top right, #dbeafe, transparent 45%), #f4f7fb; }
+.member-login { min-height: 100dvh; padding: max(22px, env(safe-area-inset-top)) 14px max(22px, env(safe-area-inset-bottom)); display: grid; place-items: center; background: radial-gradient(circle at top right, #dbeafe, transparent 45%), #f4f7fb; }
 .member-login-card { width: min(100%, 430px); padding: 27px 22px; border: 1px solid #dce5ef; border-radius: 25px; background: white; box-shadow: 0 25px 60px rgba(24,50,82,.10); }
-.member-login-logo { margin-bottom: 22px; width: 50px; height: 50px; }
+.member-login-logo { width: 50px; height: 50px; }
 .member-login-card h1 { font-size: 34px; }
 .member-privacy { margin: 20px 0 0; color: #7b8797; font-size: 11px; line-height: 1.6; }
+.beta-lockup { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.beta-badge { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 9px; border: 1px solid #bdd8f8; border-radius: 999px; background: #eaf4ff; color: #245688; font-size: 10px; font-style: normal; font-weight: 850; letter-spacing: .04em; white-space: nowrap; }
+.telegram-button { width: 100%; min-height: 52px; margin-top: 18px; background: #1677b7; touch-action: manipulation; }
+.telegram-login-wait { display: grid; justify-items: stretch; gap: 10px; margin-top: 20px; padding: 16px; border: 1px solid #d6e5f3; border-radius: 16px; background: #f3f8fd; text-align: center; }
+.telegram-login-wait .telegram-button { margin-top: 0; }
+.telegram-login-wait p { margin: 0; color: #354b63; line-height: 1.6; }
+.telegram-status-dot { width: 12px; height: 12px; margin: 0 auto; border: 3px solid #b8d8ed; border-top-color: #1677b7; border-radius: 50%; animation: telegram-wait .8s linear infinite; }
+.onboarding-page { max-width: 680px; margin: 0 auto; }
+.onboarding-status { display: grid; gap: 14px; text-align: center; }
+.onboarding-progress { overflow: hidden; height: 9px; border-radius: 999px; background: #e8edf3; }
+.onboarding-progress span { display: block; height: 100%; min-width: 4px; border-radius: inherit; background: linear-gradient(90deg, var(--member-primary), var(--member-secondary)); transition: width .25s ease; }
+@keyframes telegram-wait { to { transform: rotate(360deg); } }
+
+.member-primary-button:hover, .member-secondary-button:hover, .telegram-button:hover { filter: brightness(.95); }
+.member-primary-button:active, .member-secondary-button:active, .telegram-button:active { filter: brightness(.9); }
+.member-primary-button:focus-visible, .member-secondary-button:focus-visible, .member-text-button:focus-visible, .member-bottom-nav a:focus-visible, .member-top-actions a:focus-visible, .member-top-actions button:focus-visible { outline: 3px solid #102f55; outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .telegram-status-dot { animation: none; border-top-color: #1677b7; }
+  .onboarding-progress span { transition: none; }
+}
 .coach-page { min-height: calc(100vh - 164px); grid-template-rows: auto minmax(320px,1fr) auto auto; }
 .coach-window { min-height: 360px; max-height: 62vh; overflow-y: auto; padding: 13px; display: flex; flex-direction: column; gap: 10px; border: 1px solid #dfe6ef; border-radius: 20px; background: white; }
 .coach-message { max-width: min(86%, 640px); padding: 11px 13px; border-radius: 16px; background: #edf2f8; }

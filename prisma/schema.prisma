@@ -312,34 +312,35 @@ model User {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  profile             UserProfile?
-  gymMemberships      GymMembership[]
-  media               Media[]
-  aiEvents            AIEvent[]
-  agentMemories       AgentMemory[]
-  aiToolExecutions    AIToolExecution[]
-  agentDecisions      AgentDecision[]
-  auditLogs           AuditLog[]              @relation("AuditActor")
-  workoutPrograms     WorkoutProgram[]
-  workoutSessions     WorkoutSession[]
-  nutritionTargets    NutritionTarget[]
-  nutritionPlans      NutritionPlan[]
-  bodyMeasurements    BodyMeasurement[]
-  weeklyCheckIns      WeeklyCheckIn[]
-  progressEvaluations ProgressEvaluation[]
-  progressPhotoSets   ProgressPhotoSet[]
-  photoAnalyses       ProgressPhotoAnalysis[]
-  trainerProfile      TrainerProfile?
-  trainerAssignments  TrainerAssignment[]     @relation("AssignedTrainer")
-  memberAssignments   TrainerAssignment[]     @relation("AssignedMember")
-  trainerPreferences  TrainerPreferences[]
-  memberApprovals     ApprovalRequest[]       @relation("ApprovalMember")
-  trainerApprovals    ApprovalRequest[]       @relation("ApprovalTrainer")
-  reviewedApprovals   ApprovalRequest[]       @relation("ApprovalReviewer")
-  identities          UserIdentity[]
-  authSessions        AuthSession[]
-  authChallenges      AuthChallenge[]
-  agentConversations  AgentConversation[]
+  profile                 UserProfile?
+  gymMemberships          GymMembership[]
+  media                   Media[]
+  aiEvents                AIEvent[]
+  agentMemories           AgentMemory[]
+  aiToolExecutions        AIToolExecution[]
+  agentDecisions          AgentDecision[]
+  auditLogs               AuditLog[]               @relation("AuditActor")
+  workoutPrograms         WorkoutProgram[]
+  workoutSessions         WorkoutSession[]
+  nutritionTargets        NutritionTarget[]
+  nutritionPlans          NutritionPlan[]
+  bodyMeasurements        BodyMeasurement[]
+  weeklyCheckIns          WeeklyCheckIn[]
+  progressEvaluations     ProgressEvaluation[]
+  progressPhotoSets       ProgressPhotoSet[]
+  photoAnalyses           ProgressPhotoAnalysis[]
+  trainerProfile          TrainerProfile?
+  trainerAssignments      TrainerAssignment[]      @relation("AssignedTrainer")
+  memberAssignments       TrainerAssignment[]      @relation("AssignedMember")
+  trainerPreferences      TrainerPreferences[]
+  memberApprovals         ApprovalRequest[]        @relation("ApprovalMember")
+  trainerApprovals        ApprovalRequest[]        @relation("ApprovalTrainer")
+  reviewedApprovals       ApprovalRequest[]        @relation("ApprovalReviewer")
+  identities              UserIdentity[]
+  authSessions            AuthSession[]
+  authChallenges          AuthChallenge[]
+  telegramLoginChallenges TelegramLoginChallenge[]
+  agentConversations      AgentConversation[]
 
   @@index([systemRole])
   @@index([onboardingStep])
@@ -467,6 +468,24 @@ model AuthSession {
 
   @@index([userId, revokedAt, expiresAt])
   @@index([expiresAt])
+}
+
+model TelegramLoginChallenge {
+  id               String    @id @default(cuid())
+  browserTokenHash String    @unique
+  botTokenHash     String    @unique
+  requestIpHash    String?
+  verifiedUserId   String?
+  expiresAt        DateTime
+  verifiedAt       DateTime?
+  consumedAt       DateTime?
+  createdAt        DateTime  @default(now())
+
+  verifiedUser User? @relation(fields: [verifiedUserId], references: [id], onDelete: SetNull)
+
+  @@index([requestIpHash, createdAt])
+  @@index([expiresAt, consumedAt])
+  @@index([verifiedUserId, verifiedAt])
 }
 
 model AgentConversation {

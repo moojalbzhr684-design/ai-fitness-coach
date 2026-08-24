@@ -8,7 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("Member Web Portal regression", () => {
   it("ships every authenticated member route", () => {
-    for (const route of ["", "coach", "workout", "nutrition", "progress", "photos", "profile", "login"]) {
+    for (const route of ["", "coach", "workout", "nutrition", "progress", "photos", "profile", "login", "onboarding"]) {
       const path = resolve(process.cwd(), "app/app", route, "page.tsx");
       expect(existsSync(path), path).toBe(true);
       expect(readFileSync(path, "utf8")).toContain("export default");
@@ -19,8 +19,19 @@ describe("Member Web Portal regression", () => {
     const assign = vi.fn();
     vi.stubGlobal("window", { location: { assign } });
     expect(redirectForMemberAuth(new MemberApiError(401, "UNAUTHENTICATED", "required"))).toBe(true);
-    expect(assign).toHaveBeenCalledWith("/app/login");
+    expect(assign).toHaveBeenCalledWith("/login");
     expect(redirectForMemberAuth(new MemberApiError(403, "FORBIDDEN", "denied"))).toBe(false);
+  });
+
+  it("ships a public Telegram beta login and keeps production staff login unavailable", () => {
+    const publicLogin = readFileSync(resolve(process.cwd(), "app/login/page.tsx"), "utf8");
+    const staffLogin = readFileSync(resolve(process.cwd(), "app/staff/login/page.tsx"), "utf8");
+    const proxy = readFileSync(resolve(process.cwd(), "app/api/v1/[...path]/route.ts"), "utf8");
+    expect(publicLogin).toContain("TelegramLogin");
+    expect(staffLogin).toContain('process.env.NODE_ENV === "production"');
+    expect(staffLogin).toContain("notFound()");
+    expect(proxy).toContain("process.env.BACKEND_API_URL");
+    expect(proxy).not.toContain("NEXT_PUBLIC_BACKEND");
   });
 
   it("provides an installable member PWA foundation", () => {

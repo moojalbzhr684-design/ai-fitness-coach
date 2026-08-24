@@ -3,6 +3,7 @@ import { AgentUnavailableError, AgentToolError } from "../agent/errors.js";
 import { MemberAuthError } from "../auth/member-auth.js";
 import { MemberAuthenticationError } from "../auth/member-session.js";
 import { RateLimitError } from "../auth/rate-limit.js";
+import { TelegramWebAuthError } from "../auth/telegram-web-auth.js";
 
 export class ApiError extends Error {
   constructor(
@@ -29,6 +30,13 @@ export function toApiError(error: unknown): ApiError {
     const conflict = error.code === "IDENTITY_CONFLICT";
     const delivery = error.code === "EMAIL_DELIVERY_UNAVAILABLE";
     return new ApiError(conflict ? 409 : delivery ? 503 : 400, error.code, error.message);
+  }
+  if (error instanceof TelegramWebAuthError) {
+    if (error.code === "TELEGRAM_LOGIN_UNAVAILABLE") return new ApiError(503, error.code, error.message);
+    if (error.code === "CHALLENGE_EXPIRED" || error.code === "CHALLENGE_USED") {
+      return new ApiError(410, error.code, error.message);
+    }
+    return new ApiError(400, error.code, error.message);
   }
   if (error instanceof AgentToolError) {
     if (error.code === "INVALID_INPUT" || error.code === "UNKNOWN_TOOL") return new ApiError(400, "VALIDATION_ERROR", "The request contains invalid fields");

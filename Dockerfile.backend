@@ -1,0 +1,26 @@
+FROM node:22-bookworm-slim AS build
+WORKDIR /app
+ARG BUILD_DATABASE_URL=postgresql://localhost/build
+ENV DATABASE_URL=${BUILD_DATABASE_URL}
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+COPY apps/web/package.json apps/web/package.json
+RUN npm ci
+
+COPY . .
+RUN npx prisma generate && npm run build
+
+FROM node:22-bookworm-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/prisma.config.ts ./prisma.config.ts
+
+EXPOSE 3000
+CMD ["npm", "run", "start:production"]

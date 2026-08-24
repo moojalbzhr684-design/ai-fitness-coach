@@ -25,6 +25,7 @@ import {
 } from "../../services/member-api.js";
 import { getCurrentWorkoutSession } from "../../services/workout-sessions.js";
 import { updateMemberProfile } from "../../services/users.js";
+import { trustedClientIp } from "../security.js";
 
 const messageSchema = z.object({ message: z.string().trim().min(1).max(4_000) }).strict();
 const weightSchema = z.object({ weightKg: z.number().finite().min(30).max(300) }).strict();
@@ -208,7 +209,7 @@ export async function memberRoutes(app: FastifyInstance, options: { agentProvide
     const { auth, scope } = await memberContext(request);
     requireMutationCsrf(request, auth);
     agentRateLimiter.consume(
-      `agent:${auth.session.userId}:${request.ip}`,
+      `agent:${auth.session.userId}:${trustedClientIp(request)}`,
       env.AGENT_MESSAGES_PER_MINUTE,
       60_000,
     );

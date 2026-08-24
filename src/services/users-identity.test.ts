@@ -28,4 +28,19 @@ describe("platform identity transition", () => {
     expect(mocks.prisma.userIdentity.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { provider_providerSubject: { provider: IdentityProvider.TELEGRAM, providerSubject: "123" } } }));
     expect(mocks.prisma.userIdentity.create).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: "existing-user", provider: IdentityProvider.TELEGRAM, providerSubject: "123", isVerified: true }) });
   });
+
+  it("never promotes a normal Telegram beta user and never downgrades an existing staff user", async () => {
+    await upsertTelegramUser({ telegramId: 123n, username: "friend" }, "999");
+    const call = mocks.prisma.user.upsert.mock.calls[0]![0];
+    expect(call.create.systemRole).toBe(SystemRole.USER);
+    expect(call.update).not.toHaveProperty("systemRole");
+  });
+
+  it("preserves the explicitly configured existing Super Admin bootstrap", async () => {
+    await upsertTelegramUser({ telegramId: 999n }, "999");
+    expect(mocks.prisma.user.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({ systemRole: SystemRole.SUPER_ADMIN }),
+      create: expect.objectContaining({ systemRole: SystemRole.SUPER_ADMIN }),
+    }));
+  });
 });

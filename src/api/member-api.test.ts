@@ -117,6 +117,19 @@ describe("versioned Member API security", () => {
     await app.close();
   });
 
+  it("provides no member endpoints that create or promote staff memberships", async () => {
+    const app = createApiServer({ logger: false });
+    for (const url of [
+      "/api/v1/member/role",
+      "/api/v1/member/trainer-membership",
+      "/api/v1/member/owner-membership",
+    ]) {
+      const response = await app.inject({ method: "POST", url, payload: { role: "OWNER", userId: "member-a" } });
+      expect(response.statusCode).toBe(404);
+    }
+    await app.close();
+  });
+
   it("executes workout actions with a server-built member actor and rejects foreign references", async () => {
     const app = createApiServer({ logger: false });
     const forged = await app.inject({ method: "POST", url: "/api/v1/member/workout/start", payload: { dayNumber: 1, userId: "victim", sessionId: "foreign" } });

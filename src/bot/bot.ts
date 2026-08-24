@@ -1,6 +1,6 @@
 import { Bot } from "grammy";
 import { askCoach, CoachUnavailableError } from "../ai/coach.js";
-import { env } from "../config/env.js";
+import { env, requireTelegramBotToken } from "../config/env.js";
 import { OnboardingStep } from "../generated/prisma/client.js";
 import { findUserByTelegramId, upsertTelegramUser } from "../services/users.js";
 import { getEffectiveGymBranding } from "../services/gym-settings.js";
@@ -58,13 +58,34 @@ import {
   handleTrainerCommand,
 } from "./trainer.js";
 import { handleForgetCommand, handleMemoryCommand } from "./memory.js";
+import { authorizeTelegramWebLogin, TelegramWebAuthError } from "../auth/telegram-web-auth.js";
 
 export function createTelegramBot(): Bot {
-  const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
+  const bot = new Bot(requireTelegramBotToken());
 
   bot.command("start", async (ctx) => {
     const from = ctx.from;
     if (!from) return;
+    const startParameter = typeof ctx.match === "string" ? ctx.match.trim() : "";
+    if (startParameter.startsWith("web_")) {
+      try {
+        const user = await authorizeTelegramWebLogin({
+          botToken: startParameter.slice(4),
+          telegramId: BigInt(from.id),
+          ...(from.username ? { username: from.username } : {}),
+          ...(from.first_name ? { firstName: from.first_name } : {}),
+          ...(from.last_name ? { lastName: from.last_name } : {}),
+        });
+        await ctx.reply("✅ تم تأكيد هويتك بأمان. ارجع للمتصفح وراح يفتح حسابك تلقائياً.");
+        if (user.onboardingStep !== OnboardingStep.COMPLETE) {
+          await sendOnboardingPrompt(ctx, user.onboardingStep, user.onboardingStep === OnboardingStep.AGE);
+        }
+      } catch (error) {
+        if (!(error instanceof TelegramWebAuthError)) throw error;
+        await ctx.reply("رابط الدخول منتهي أو مستخدم. ارجع لصفحة الدخول واطلب رابط جديد.");
+      }
+      return;
+    }
     const wasExisting = await findUserByTelegramId(BigInt(from.id));
     const user = await upsertTelegramUser(
       {

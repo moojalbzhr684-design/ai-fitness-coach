@@ -1,5 +1,5 @@
 import type { Api } from "grammy";
-import { env } from "../config/env.js";
+import { requireTelegramBotToken } from "../config/env.js";
 import { MediaStorageError, type MediaStorage } from "./storage.js";
 import {
   MAX_PROGRESS_PHOTO_BYTES,
@@ -16,7 +16,7 @@ function validPositiveInteger(value: number | undefined): number | null {
 export class TelegramMediaStorage implements MediaStorage {
   constructor(
     private readonly api: Api,
-    private readonly botToken = env.TELEGRAM_BOT_TOKEN,
+    private readonly botToken = requireTelegramBotToken(),
     private readonly maxBytes = MAX_PROGRESS_PHOTO_BYTES,
   ) {}
 

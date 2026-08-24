@@ -1,6 +1,29 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { FastifyRequest } from "fastify";
 import { env } from "../config/env.js";
 import { ApiError } from "./errors.js";
+
+const PROXY_IP_HEADER = "x-afc-proxy-ip";
+const PROXY_SIGNATURE_HEADER = "x-afc-proxy-signature";
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export function trustedClientIp(request: FastifyRequest): string {
+  const ip = headerValue(request.headers[PROXY_IP_HEADER]);
+  const signature = headerValue(request.headers[PROXY_SIGNATURE_HEADER]);
+  if (!env.MEMBER_PROXY_SECRET || !ip || !signature || ip.length > 128 || !/^[a-f0-9]{64}$/.test(signature)) {
+    return request.ip;
+  }
+  const expected = createHmac("sha256", env.MEMBER_PROXY_SECRET).update(ip).digest("hex");
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer)
+    ? ip
+    : request.ip;
+}
 
 export function registerApiSecurity(app: FastifyInstance) {
   const allowedOrigins = new Set(env.MEMBER_ALLOWED_ORIGINS.split(",").map((item) => item.trim()).filter(Boolean));

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { z } from "zod";
 import {
   DASHBOARD_SESSION_COOKIE,
@@ -22,7 +23,10 @@ export async function getSessionActorUserId(): Promise<string | null> {
 
 export async function requireSessionActorUserId(): Promise<string> {
   const actorUserId = await getSessionActorUserId();
-  if (!actorUserId) redirect("/login");
+  if (!actorUserId) {
+    if (process.env.NODE_ENV === "production") notFound();
+    redirect("/staff/login");
+  }
   return actorUserId;
 }
 

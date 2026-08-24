@@ -1,6 +1,6 @@
-# AI Fitness Coach — Milestone 9
+# AI Fitness Coach — Public Beta
 
-Production-oriented multi-tenant AI fitness platform with Telegram coaching, a secured versioned Member API, a mobile-first Member Web Portal, and role-scoped staff dashboards. Milestone 9 evolves Telegram-linked users into one cross-channel identity and gives future mobile clients the same Agent and deterministic services. Native mobile, payments, device integrations, public galleries, browsing, voice, WhatsApp, and per-gym bot tokens remain out of scope.
+Production-oriented multi-tenant AI fitness platform with Telegram coaching, a secured versioned Member API, a mobile-first Member Web Portal, and role-scoped staff dashboards. The Railway public beta adds production Telegram-linked Web login without beginning Milestone 10. Native mobile, payments, device integrations, public galleries, browsing, voice, WhatsApp, and per-gym bot tokens remain out of scope.
 
 ## Architecture
 
@@ -77,12 +77,34 @@ OTP codes are cryptographically random six-digit values, expire after ten minute
 
 The staff dashboard's Milestone 7 development login remains separate and remains disabled in production. It is not a member login and was not generalized into the production member identity flow.
 
+### Public beta Telegram Web login
+
+The public `/login` route does not use the development email provider. It creates a short-lived `TelegramLoginChallenge` with two independent 256-bit capabilities: a browser polling token and a Telegram deep-link token. Only SHA-256 hashes are stored. The bot receives the Telegram user ID directly from Telegram, upserts the existing `User`/verified `TELEGRAM` `UserIdentity`, and marks the challenge verified. The browser can only poll with its separate capability; it cannot submit a user ID, role, username, or gym scope. Successful polling atomically consumes the challenge and creates the normal opaque Web session. Expired, verified, or consumed challenges cannot be replayed.
+
+Every new Telegram tester defaults to `SystemRole.USER` with no gym membership. The existing configured Super Admin account is preserved, but a member session never creates a staff dashboard session and the Member API always builds a member-only actor. Joining a gym through the existing verified join flow creates only the server-authorized membership role. Names, Telegram usernames, query parameters, and browser payloads never assign staff roles.
+
+```text
+Public /login
+  ↓ random browser + bot capabilities
+Telegram bot deep link
+  ↓ Telegram-supplied numeric identity
+Verified TELEGRAM UserIdentity
+  ↓ one-time challenge consumption
+HTTP-only member session
+  ↓
+/app
+```
+
+New testers complete the existing Telegram onboarding questions in the same bot conversation. `/app/onboarding` clearly shows this handoff and watches the existing `onboardingStep`; it redirects into the portal when the service-backed Telegram flow reaches `COMPLETE`. This deliberately avoids a second onboarding rules engine.
+
 ## Member API
 
 Fastify exposes JSON under `/api/v1`. Successes use `{ "data": ... }`; failures use `{ "error": { "code": "...", "message": "..." } }` and never include a stack trace. Actor IDs, system roles, gym roles, and tenant authorization are derived from the authenticated session. `X-Gym-Id` is accepted only as a selection among the actor's active `MEMBER` memberships; a foreign tenant is rejected and multiple memberships require an explicit selection.
 
 Authentication endpoints:
 
+- `POST /api/v1/auth/telegram/request`
+- `POST /api/v1/auth/telegram/status`
 - `POST /api/v1/auth/otp/request`
 - `POST /api/v1/auth/otp/verify`
 - `POST /api/v1/auth/link/email/request`
@@ -105,13 +127,13 @@ Workout mutations reuse the Milestone 8 strict tool schemas and allow-listed reg
 
 Conversation UX is stored as `AgentConversation` plus visible `USER`/`ASSISTANT` `AgentMessage` rows. Tool payloads, hidden reasoning, images, and credentials are never conversation messages. Storage is capped at 100 messages per conversation and only the latest 12 visible messages are supplied to the model alongside the structured long-term context. Staff dashboards do not expose these conversations; operational debugging continues through sanitized `AIEvent` and `AIToolExecution` records.
 
-API CORS accepts only `MEMBER_ALLOWED_ORIGINS`, never wildcard credentialed origins. API and Next.js responses set content-type, referrer, frame, permissions, and practical CSP protections. Cookie mutations require CSRF; bearer requests do not use browser CSRF. OTP and Agent endpoints have configurable basic rate limits. The in-process Agent limiter is suitable for the current single backend deployment; a horizontally scaled deployment should replace it with a shared atomic limiter before scale-out.
+API CORS accepts only `MEMBER_ALLOWED_ORIGINS`, never wildcard credentialed origins. API and Next.js responses set content-type, referrer, frame, permissions, and practical CSP protections. Cookie mutations require CSRF; bearer requests do not use browser CSRF. OTP, Telegram challenge, and Agent endpoints have configurable basic rate limits. The in-process limiters are suitable for the current single backend deployment; a horizontally scaled deployment should replace them with a shared atomic limiter before scale-out.
 
 ## Member Web Portal
 
-The responsive portal is under `/app`, with `/app/coach`, `/app/workout`, `/app/nutrition`, `/app/progress`, `/app/photos`, and `/app/profile`; `/app/login` is the passwordless entry. It calls the Member API rather than Prisma or duplicated business logic. The interface uses large tap targets, a fixed bottom navigation, responsive charts/forms, and a 320px layout. Gym display name, AI name, and validated six-digit hex colors are used when available; database content cannot inject CSS. Independent users receive neutral platform branding.
+The responsive portal is under `/app`, with `/app/coach`, `/app/workout`, `/app/nutrition`, `/app/progress`, `/app/photos`, and `/app/profile`; public member authentication starts at `/login` and `/app/login` is only a compatibility redirect. It calls the Member API rather than Prisma or duplicated business logic. The interface is visibly marked Beta and uses large tap targets, visible focus states, reduced-motion handling, fixed bottom navigation, responsive charts/forms, and a 320px layout. Gym display name, AI name, and validated six-digit hex colors are used when available; database content cannot inject CSS. Independent users receive neutral platform branding.
 
-The portal includes a basic manifest and safe local SVG icon for installability. It does not implement offline data caching or secure photo upload transport. The photo page therefore presents only metadata and stored text summaries. Development configuration uses `NEXT_PUBLIC_MEMBER_API_URL`; its origin is also included in the generated web CSP.
+The portal includes a basic manifest and safe local SVG icon for installability. It does not implement offline data caching or secure photo upload transport. The photo page therefore presents only metadata and stored text summaries. Browser API calls stay same-origin through a Next.js route proxy configured with the server-only `BACKEND_API_URL`; backend credentials and service URLs are not placed in the client bundle.
 
 ## Requirements
 
@@ -133,6 +155,8 @@ Fill in `.env`:
 ```dotenv
 DATABASE_URL=postgresql://postgres:password@localhost:5432/ai_fitness_coach
 TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_BOT_USERNAME=your_bot_username_without_at
+MEMBER_WEB_URL=http://localhost:3001
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_MODEL=gpt-5
 SUPER_ADMIN_TELEGRAM_ID=
@@ -141,6 +165,7 @@ DASHBOARD_DEV_LOGIN_TOKEN=
 DASHBOARD_DEV_USER_TELEGRAM_ID=
 PORT=3000
 NODE_ENV=development
+BACKEND_API_URL=http://localhost:3000
 ```
 
 `DATABASE_URL` and `TELEGRAM_BOT_TOKEN` are required at startup. `OPENAI_API_KEY` is optional only if AI chat is not being used; a missing key produces a logged `ERROR` AI event and a safe Telegram message. `SUPER_ADMIN_TELEGRAM_ID` is optional and must be a numeric Telegram user ID. Never commit `.env`.
@@ -257,6 +282,37 @@ npm run web:build
 ```
 
 The dashboard entry point routes authorized users to `/admin`, `/gym`, or `/trainer`. A user with multiple staff tenants receives an explicit role/gym selector; no tenant is chosen implicitly.
+
+## Railway public beta deployment
+
+Use one Railway project with three services: Railway PostgreSQL, Backend, and Web. Both application services deploy from this repository. Configure the Backend service to use `/railway.backend.toml` and the Web service to use `/railway.web.toml`. These select `Dockerfile.backend` and `Dockerfile.web`; both images use Node 22, and the backend binds Fastify to `0.0.0.0:$PORT`. The backend container runs `prisma migrate deploy` before starting. Run `npm run db:seed` once against the Railway database after migrations; the seed uses upserts and is idempotent.
+
+Backend variables (secret values belong only in Railway):
+
+- `DATABASE_URL` from the Railway PostgreSQL service
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`
+- `OPENAI_API_KEY`, `OPENAI_MODEL`
+- `NODE_ENV=production`
+- `MEMBER_ALLOWED_ORIGINS=https://<web-domain>`
+- `MEMBER_WEB_URL=https://<web-domain>`
+- `MEMBER_PROXY_SECRET` (the same 32+ character random value on Backend and Web)
+- optional documented auth/rate-limit overrides
+- `SUPER_ADMIN_TELEGRAM_ID` only when preserving the existing configured account
+
+Web variables:
+
+- `BACKEND_API_URL=https://<backend-domain>` (server-only)
+- `DATABASE_URL` for the existing server-rendered staff modules; never prefix it with `NEXT_PUBLIC_`
+- `TELEGRAM_BOT_TOKEN` only for the existing protected staff media adapter; it remains server-only
+- `DASHBOARD_SESSION_SECRET` (32+ random characters)
+- `MEMBER_PROXY_SECRET` (matching Backend; signs the proxy-only rate-limit IP handoff)
+- `NODE_ENV=production`
+
+Do not configure `DASHBOARD_DEV_LOGIN_TOKEN` or `DASHBOARD_DEV_USER_TELEGRAM_ID` in the public Web service. `/staff/login` returns not found in production, `/login` is member-only, and authenticated member cookies cannot open `/admin`, `/gym`, or `/trainer`. Do not enable the development email provider. The production backend rejects email delivery while no real provider exists and never logs an OTP.
+
+Generate Railway HTTPS domains for Web and Backend. The Web domain is the tester link. The backend domain is used for health checks and the Web proxy. Keep `MEMBER_ALLOWED_ORIGINS` exact; do not use `*` with credentials. Because the browser talks only to the same-origin Next proxy, the Secure, HTTP-only, SameSite=Strict session cookie stays scoped to the Web origin while the proxy talks server-to-server to Fastify.
+
+Before starting Railway long polling with a production bot token, verify no local `src/index.ts` or built backend process is using the same token. Railway should run exactly one Backend replica during this beta. Verify the public backend `/health`, public `/login`, protected `/app`, Telegram challenge expiry/replay behavior, onboarding, all member pages, migrations, seed counts, and Railway bot logs after deployment.
 
 ### Development authentication
 

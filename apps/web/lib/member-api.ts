@@ -5,7 +5,8 @@ export class MemberApiError extends Error {
   }
 }
 
-export const memberApiBaseUrl = process.env.NEXT_PUBLIC_MEMBER_API_URL ?? "http://localhost:3000";
+// Browser traffic stays same-origin. Next.js proxies these requests using server-only BACKEND_API_URL.
+export const memberApiBaseUrl = "";
 
 function storedCsrfToken(): string | undefined {
   if (typeof document === "undefined") return undefined;
@@ -39,7 +40,10 @@ export async function memberApi<T>(path: string, init: RequestInit = {}): Promis
     if (gymRef) headers.set("X-Gym-Id", gymRef);
   }
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
-  const csrfExempt = path === "/api/v1/auth/otp/request" || path === "/api/v1/auth/otp/verify";
+  const csrfExempt = path === "/api/v1/auth/otp/request"
+    || path === "/api/v1/auth/otp/verify"
+    || path === "/api/v1/auth/telegram/request"
+    || path === "/api/v1/auth/telegram/status";
   if (!["GET", "HEAD", "OPTIONS"].includes(method) && !csrfExempt) {
     const csrf = await csrfToken();
     if (csrf) headers.set("X-CSRF-Token", csrf);
@@ -59,7 +63,7 @@ export async function memberApi<T>(path: string, init: RequestInit = {}): Promis
 
 export function redirectForMemberAuth(error: unknown): boolean {
   if (error instanceof MemberApiError && error.status === 401 && typeof window !== "undefined") {
-    window.location.assign("/app/login");
+    window.location.assign("/login");
     return true;
   }
   return false;

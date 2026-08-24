@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { EmailProvider } from "../../auth/email-provider.js";
 import { requestEmailLoginCode, verifyEmailLoginCode } from "../../auth/member-auth.js";
+import { consumeTelegramWebLogin, createTelegramWebLogin } from "../../auth/telegram-web-auth.js";
 import {
   authenticateMemberRequest,
   clearMemberCsrfCookie,
@@ -15,6 +16,7 @@ import {
   revokeUserSession,
 } from "../../auth/member-session.js";
 import { prisma } from "../../lib/prisma.js";
+import { trustedClientIp } from "../security.js";
 
 const requestSchema = z.object({ email: z.string().trim().min(3).max(254) }).strict();
 const verifySchema = z.object({
@@ -24,13 +26,41 @@ const verifySchema = z.object({
   client: z.enum(["WEB", "MOBILE"]).default("WEB"),
 }).strict();
 const revokeSchema = z.object({ sessionRef: z.string().trim().min(1).max(100) }).strict();
+const telegramRequestSchema = z.object({}).strict();
+const telegramStatusSchema = z.object({
+  challengeId: z.string().trim().min(1).max(100),
+  browserToken: z.string().trim().min(40).max(64),
+}).strict();
 
 export async function authRoutes(app: FastifyInstance, options: { emailProvider?: EmailProvider } = {}) {
+  app.post("/api/v1/auth/telegram/request", async (request, reply) => {
+    telegramRequestSchema.parse(request.body ?? {});
+    const result = await createTelegramWebLogin({ ip: trustedClientIp(request) });
+    return reply.status(201).send({ data: result });
+  });
+
+  app.post("/api/v1/auth/telegram/status", async (request, reply) => {
+    const body = telegramStatusSchema.parse(request.body);
+    const result = await consumeTelegramWebLogin({ ...body, ip: trustedClientIp(request) });
+    if (result.status === "PENDING") return reply.status(202).send({ data: result });
+    reply.header("Set-Cookie", [
+      memberSessionCookie(result.session.token, result.session.expiresAt),
+      memberCsrfCookie(result.session.csrfToken, result.session.expiresAt),
+    ]);
+    return reply.send({
+      data: {
+        status: result.status,
+        csrfToken: result.session.csrfToken,
+        expiresAt: result.session.expiresAt,
+      },
+    });
+  });
+
   app.post("/api/v1/auth/otp/request", async (request, reply) => {
     const body = requestSchema.parse(request.body);
     const result = await requestEmailLoginCode({
       email: body.email,
-      ip: request.ip,
+      ip: trustedClientIp(request),
       ...(options.emailProvider ? { provider: options.emailProvider } : {}),
     });
     return reply.status(202).send({ data: result });
@@ -59,7 +89,7 @@ export async function authRoutes(app: FastifyInstance, options: { emailProvider?
     const body = requestSchema.parse(request.body);
     const result = await requestEmailLoginCode({
       email: body.email,
-      ip: request.ip,
+      ip: trustedClientIp(request),
       purpose: AuthChallengePurpose.LINK_IDENTITY,
       linkUserId: auth.session.userId,
       ...(options.emailProvider ? { provider: options.emailProvider } : {}),
